@@ -1,0 +1,30 @@
+# Binaries
+wisp-server
+wisp-client
+wisp-client-mac
+vpn-server
+vpn-client
+vpn-client-mac
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE & AI
+.idea/
+.vscode/
+.cursor/
+.claude/
+.aider*
+.continue/
+.copilot/
+*.swp
+*.swo
+
+# Config with real credentials (use examples)
+configs/server.yaml
+configs/client.yaml
+
+# Temp
+*.log

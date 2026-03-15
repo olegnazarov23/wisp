@@ -1,0 +1,24 @@
+# Wisp Client Configuration
+
+server: "yourdomain.com:443"
+password: "your-password"
+sni: "yourdomain.com"
+
+# Local SOCKS5 proxy address.
+# Point your browser or system proxy settings here.
+listen: "127.0.0.1:1080"
+
+# TLS fingerprint to mimic: chrome, firefox, safari, edge, ios
+fingerprint: "chrome"
+
+# Transport mode:
+#   "tls"  — Direct Trojan over TLS (fastest)
+#   "ws"   — WebSocket (works through CDNs)
+#   "grpc" — Looks like gRPC API traffic (best for DPI evasion)
+transport: "grpc"
+ws_path: "/api/v1/stream"
+
+# Inner encryption (must match server config).
+encryption:
+  enabled: true
+  key: "same-key-as-server"
