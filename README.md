@@ -201,10 +201,37 @@ JSON endpoint also available at `/stats`.
 Requires Go 1.22+.
 
 ```bash
-git clone https://github.com/awisp/wisp.git
+git clone https://github.com/olegnazarov23/wisp.git
 cd wisp
 go build ./...
 ```
+
+## Related projects
+
+Wisp stands on the shoulders of these projects and draws inspiration from the broader anti-censorship community:
+
+- **[Trojan-GFW](https://github.com/trojan-gfw/trojan)** — The original Trojan protocol that proved "look like HTTPS" is the best strategy. Wisp implements a compatible protocol
+- **[Xray-core](https://github.com/XTLS/Xray-core)** — Feature-rich proxy platform with VLESS, REALITY, and XTLS. The gold standard for censorship circumvention in China
+- **[Shadowsocks](https://github.com/shadowsocks/shadowsocks-rust)** — The project that started it all. Pioneered encrypted proxy protocols for bypassing the GFW
+- **[uTLS](https://github.com/refraction-networking/utls)** — Makes Go TLS handshakes indistinguishable from real browsers. Critical for defeating TLS fingerprinting
+- **[Cloak](https://github.com/cbeuw/Cloak)** — Pluggable transport that multiplexes VPN traffic through TLS tunnels with active probe resistance
+- **[Sing-box](https://github.com/SagerNet/sing-box)** — Universal proxy platform with wide protocol support and excellent mobile clients
+- **[V2Ray](https://github.com/v2fly/v2ray-core)** — Mature proxy platform with VMess protocol and extensive transport options
+- **[Tor](https://www.torproject.org/)** — The original censorship resistance network. Different threat model but shared mission
+
+### Compatible clients
+
+| Platform | App | Protocol |
+|----------|-----|----------|
+| iOS | [Shadowrocket](https://apps.apple.com/app/shadowrocket/id932747118) | Trojan |
+| iOS | [Quantumult X](https://apps.apple.com/app/quantumult-x/id1443988620) | Trojan |
+| Android | [v2rayNG](https://github.com/2dust/v2rayNG) | Trojan |
+| Android | [NekoBox](https://github.com/MatsuriDayo/NekoBoxForAndroid) | Trojan |
+| Windows/macOS/Linux | Wisp client (this repo) | Full (mux + encryption) |
+
+## Contributing
+
+Contributions welcome. If you're in a country with internet censorship and have ideas for improving detection resistance, please open an issue or PR.
 
 ## License
 
