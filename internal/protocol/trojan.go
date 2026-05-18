@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 )
 
 const (
@@ -34,7 +35,7 @@ type Request struct {
 
 // Address returns "host:port" suitable for net.Dial.
 func (r *Request) Address() string {
-	return fmt.Sprintf("%s:%d", r.DstAddr, r.DstPort)
+	return net.JoinHostPort(r.DstAddr, strconv.Itoa(int(r.DstPort)))
 }
 
 // WriteRequest writes a full Trojan request header to w.
