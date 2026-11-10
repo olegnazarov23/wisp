@@ -20,6 +20,8 @@ type ServerConfig struct {
 	WebSocket  *WSConfig         `yaml:"websocket"`
 	CoverSite  string            `yaml:"cover_site"` // Path to cover website files.
 	Encryption *EncryptionConfig `yaml:"encryption"`
+	// AllowPrivate lets users reach loopback, private and link-local addresses through the server.
+	AllowPrivate bool `yaml:"allow_private"`
 
 	// Pre-computed password hashes (not from YAML).
 	PasswordHashes map[string]bool   `yaml:"-"`
@@ -114,6 +116,9 @@ func LoadServerConfig(path string) (*ServerConfig, error) {
 		cfg.UserNames[h] = u.Name
 	}
 
+	if cfg.Encryption != nil && cfg.Encryption.Enabled && cfg.Encryption.Key == "" {
+		return nil, fmt.Errorf("encryption is enabled without a key")
+	}
 	return &cfg, nil
 }
 
@@ -144,5 +149,8 @@ func LoadClientConfig(path string) (*ClientConfig, error) {
 
 	cfg.PasswordHash = HashPassword(cfg.Password)
 
+	if cfg.Encryption != nil && cfg.Encryption.Enabled && cfg.Encryption.Key == "" {
+		return nil, fmt.Errorf("encryption is enabled without a key")
+	}
 	return &cfg, nil
 }

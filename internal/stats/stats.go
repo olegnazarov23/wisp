@@ -2,6 +2,7 @@ package stats
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -125,7 +126,8 @@ func (t *Tracker) JSON() ([]byte, error) {
 // CountedConn wraps a net.Conn and counts bytes read/written.
 type CountedConn struct {
 	net.Conn
-	stats *UserStats
+	stats  *UserStats
+	closed atomic.Bool
 }
 
 // WrapConn wraps a connection with byte counting for a user.
@@ -154,7 +156,22 @@ func (c *CountedConn) Write(b []byte) (int, error) {
 }
 
 func (c *CountedConn) Close() error {
+	if c.closed.Swap(true) {
+		return nil
+	}
 	c.stats.Active.Add(-1)
 	c.stats.LastSeen.Store(time.Now())
 	return c.Conn.Close()
+}
+
+// CloseWrite half-closes the connection underneath when it can.
+func (c *CountedConn) CloseWrite() error {
+	return closeWrite(c.Conn)
+}
+
+func closeWrite(conn net.Conn) error {
+	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }

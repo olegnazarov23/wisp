@@ -29,6 +29,7 @@ const (
 
 	headerSize   = 8
 	maxFrameSize = 32768 // 32KB — matches common TLS record size.
+	maxStreams   = 1024  // open streams per session; a SYN beyond that gets a FIN
 )
 
 // Session manages a multiplexed connection.
@@ -124,6 +125,7 @@ func (s *Session) IsClosed() bool {
 
 func (s *Session) readLoop() {
 	defer s.Close()
+	defer func() { recover() }() // a bad frame ends this session, not the process
 
 	hdr := make([]byte, headerSize)
 	for {
@@ -145,8 +147,13 @@ func (s *Session) readLoop() {
 
 		switch {
 		case flags&flagSYN != 0:
-			stream := newStream(streamID, s)
 			s.mu.Lock()
+			if len(s.streams) >= maxStreams {
+				s.mu.Unlock()
+				s.writeFrame(streamID, flagFIN, nil)
+				continue
+			}
+			stream := newStream(streamID, s)
 			s.streams[streamID] = stream
 			s.mu.Unlock()
 			select {
@@ -207,6 +214,7 @@ type Stream struct {
 	readCh  chan []byte
 	readBuf []byte
 	closed  atomic.Bool
+	wrote   atomic.Bool // FIN sent: this side is done writing
 	closeCh chan struct{}
 }
 
@@ -243,7 +251,7 @@ func (st *Stream) Read(b []byte) (int, error) {
 }
 
 func (st *Stream) Write(b []byte) (int, error) {
-	if st.closed.Load() {
+	if st.closed.Load() || st.wrote.Load() {
 		return 0, fmt.Errorf("stream closed")
 	}
 
@@ -262,11 +270,21 @@ func (st *Stream) Write(b []byte) (int, error) {
 	return written, nil
 }
 
+// CloseWrite tells the other side this side is done sending (a FIN), and keeps reading.
+func (st *Stream) CloseWrite() error {
+	if st.closed.Load() || st.wrote.Swap(true) {
+		return nil
+	}
+	return st.session.writeFrame(st.id, flagFIN, nil)
+}
+
 func (st *Stream) Close() error {
 	if st.closed.Swap(true) {
 		return nil
 	}
-	st.session.writeFrame(st.id, flagFIN, nil)
+	if !st.wrote.Swap(true) {
+		st.session.writeFrame(st.id, flagFIN, nil)
+	}
 	close(st.closeCh)
 	st.session.removeStream(st.id)
 	return nil

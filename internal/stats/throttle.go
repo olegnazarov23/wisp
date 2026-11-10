@@ -42,6 +42,11 @@ func (c *ThrottledConn) Read(b []byte) (int, error) {
 	return n, err
 }
 
+// CloseWrite half-closes the connection underneath when it can.
+func (c *ThrottledConn) CloseWrite() error {
+	return closeWrite(c.Conn)
+}
+
 func (c *ThrottledConn) Write(b []byte) (int, error) {
 	if c.limiter != nil {
 		c.limiter.Wait(len(b))
@@ -70,14 +75,22 @@ func NewRateLimiter(bytesPerSec int64) *RateLimiter {
 	}
 }
 
-// Wait blocks until enough tokens are available for n bytes.
+// Wait blocks until enough tokens are available for n bytes, taking them a bucket at a time when
+// n is more than the bucket holds.
 func (r *RateLimiter) Wait(n int) {
+	for n > 0 {
+		take := min(float64(n), r.maxTokens)
+		r.wait(take)
+		n -= int(take)
+	}
+}
+
+func (r *RateLimiter) wait(needed float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.refill()
 
-	needed := float64(n)
 	for r.tokens < needed {
 		// Calculate wait time for enough tokens.
 		deficit := needed - r.tokens

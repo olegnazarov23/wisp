@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/olegnazarov23/wisp/internal/stats"
 	"github.com/olegnazarov23/wisp/internal/tunnel"
@@ -60,6 +61,10 @@ func main() {
 		EncryptionKey:  encKey,
 		UserNames:      cfg.UserNames,
 		UserSpeeds:     cfg.UserSpeeds,
+		AllowPrivate:   cfg.AllowPrivate,
+	}
+	if cfg.AllowPrivate {
+		log.Printf("users may reach private addresses through the server")
 	}
 
 	// Set bandwidth and speed limits from config.
@@ -89,12 +94,17 @@ func main() {
 	startAdmin()
 	log.Printf("server ready, accepting connections")
 
+	// back off on errors such as running out of file descriptors, instead of spinning
+	var delay time.Duration
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("accept: %v", err)
+			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
+			log.Printf("accept: %v; retrying in %v", err, delay)
+			time.Sleep(delay)
 			continue
 		}
+		delay = 0
 		go handler.Handle(conn)
 	}
 }
