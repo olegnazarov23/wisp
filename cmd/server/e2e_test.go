@@ -166,6 +166,126 @@ func TestHTTP2(t *testing.T) {
 	}
 }
 
+// One frame with a huge length used to crash the whole server, before any authentication.
+func TestWebSocketBadFrames(t *testing.T) {
+	env := newEnv(t, false)
+	addr := env.server(t, innerKey)
+
+	for name, frame := range map[string]string{
+		"ping, 2^64-1 bytes":           "\x89\x7f\xff\xff\xff\xff\xff\xff\xff\xff",
+		"masked binary, negative size": "\x82\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01\x02\x03\x04",
+		"ping, 126 bytes":              "\x89\x7e\x00\x7e",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := env.dialTLS(t, addr, "http/1.1")
+			upgrade := "GET " + wsPath + " HTTP/1.1\r\nHost: wisp.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+				"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+			start := time.Now()
+			c.Write([]byte(upgrade + frame))
+			c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			io.ReadAll(c)
+			if d := time.Since(start); d > 2*time.Second {
+				t.Fatalf("the frame wasn't refused: the connection stayed open %v", d)
+			}
+		})
+	}
+
+	// and it's still serving
+	c := env.dialTLS(t, addr, "http/1.1")
+	protocol.WriteRequest(c, config.HashPassword(alicePassword), trojanRequest(t, env.echo), []byte("ping"))
+	if got := readN(t, c, 4); string(got) != "ping" {
+		t.Fatalf("echo after bad frames: %q", got)
+	}
+}
+
+// The cover site gets requests exactly as sent, answers them as fast as it would directly, and
+// its closing the connection closes it for the client too.
+func TestFallbackFaithful(t *testing.T) {
+	env := newEnv(t, false)
+	addr := env.server(t, "")
+
+	for _, tc := range []struct{ name, send, want string }{
+		{"HTTP/1.0 stays 1.0", "GET /old HTTP/1.0\r\n\r\n", "GET /old HTTP/1.0"},
+		{"pipelined requests", "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", "GET /b"},
+		{"unlisted method, short", "TRACE / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", "TRACE /"},
+		{"garbage", "garbage\r\n\r\n", "400 Bad Request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := env.dialTLS(t, addr, "http/1.1")
+			start := time.Now()
+			c.Write([]byte(tc.send))
+			c.SetReadDeadline(time.Now().Add(8 * time.Second))
+			reply, err := io.ReadAll(c)
+			if err != nil {
+				t.Fatalf("the connection didn't close with the cover site's: %v after %v", err, time.Since(start))
+			}
+			if d := time.Since(start); d > 2*time.Second {
+				t.Fatalf("answered after %v", d)
+			}
+			if !strings.Contains(string(reply), tc.want) {
+				t.Fatalf("got %q, want %q in it", reply, tc.want)
+			}
+		})
+	}
+}
+
+// Users can't reach the server's own network unless allow_private says so.
+func TestPrivateDestinations(t *testing.T) {
+	env := newEnv(t, false)
+	addr := env.server(t, "", func(h *Handler) { h.AllowPrivate = false })
+
+	c := env.dialTLS(t, addr, "http/1.1")
+	protocol.WriteRequest(c, config.HashPassword(alicePassword), trojanRequest(t, env.echo), []byte("ping"))
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := c.Read(make([]byte, 4)); err == nil {
+		t.Fatalf("reached a loopback address: %d bytes back", n)
+	}
+}
+
+// A destination that closes its side: the app sees the end, instead of waiting forever.
+func TestClosePropagates(t *testing.T) {
+	env := newEnv(t, false)
+	addr := env.server(t, innerKey)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Write([]byte("hello"))
+			c.Close()
+		}
+	}()
+
+	for _, transport := range []string{"tls", "ws"} {
+		t.Run(transport, func(t *testing.T) {
+			client := &proxy.SOCKS5Server{
+				ServerAddr: addr, SNI: "wisp.test", Fingerprint: "chrome", WSPath: wsPath,
+				PasswordHash: config.HashPassword(alicePassword), Transport: transport, EncryptionKey: innerKey,
+			}
+			sl, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sl.Close()
+			go client.Serve(sl)
+
+			c := socksConnect(t, sl.Addr().String(), l.Addr().String())
+			c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			got, err := io.ReadAll(c)
+			if err != nil || string(got) != "hello" {
+				t.Fatalf("got %q, %v; want hello, then the end", got, err)
+			}
+		})
+	}
+}
+
 type env struct {
 	roots             *x509.CertPool
 	certFile, keyFile string
@@ -205,8 +325,9 @@ func newEnv(t *testing.T, h2 bool) *env {
 	return e
 }
 
-// server starts a wisp server with the users alice and bob and returns its address.
-func (e *env) server(t *testing.T, encKey string) string {
+// server starts a wisp server with the users alice and bob and returns its address. Users may
+// reach private addresses, the test's servers among them, unless an option says otherwise.
+func (e *env) server(t *testing.T, encKey string, opts ...func(*Handler)) string {
 	alice, bob := config.HashPassword(alicePassword), config.HashPassword(bobPassword)
 	h := &Handler{
 		PasswordHashes: map[string]bool{alice: true, bob: true},
@@ -216,6 +337,10 @@ func (e *env) server(t *testing.T, encKey string) string {
 		FallbackH2Addr: e.coverH2,
 		WSConfig:       &config.WSConfig{Enabled: true, Path: wsPath},
 		EncryptionKey:  encKey,
+		AllowPrivate:   true,
+	}
+	for _, opt := range opts {
+		opt(h)
 	}
 	l, err := tunnel.NewTLSListener("127.0.0.1:0", e.certFile, e.keyFile, e.coverH2 != "")
 	if err != nil {
