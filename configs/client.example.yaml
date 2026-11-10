@@ -8,14 +8,15 @@ sni: "yourdomain.com"
 # Point your browser or system proxy settings here.
 listen: "127.0.0.1:1080"
 
-# TLS fingerprint to mimic: chrome, firefox, safari, edge, ios
+# TLS fingerprint to mimic: chrome, firefox, safari, edge, ios or random
 fingerprint: "chrome"
 
 # Transport mode:
-#   "tls"  — Direct Trojan over TLS (fastest)
-#   "ws"   — WebSocket (works through CDNs)
-#   "grpc" — Looks like gRPC API traffic (best for DPI evasion)
-transport: "grpc"
+#   "tls"  — Trojan straight over TLS (fastest, the default)
+#   "ws"   — WebSocket (works through CDNs that pass WebSockets)
+#   "grpc" — an HTTP POST stream that looks like gRPC
+transport: "tls"
+# The server's websocket path, for ws and grpc
 ws_path: "/api/v1/stream"
 
 # Inner encryption (must match server config).

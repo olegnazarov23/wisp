@@ -1,6 +1,13 @@
-# Wisp
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/wisp-logo-dark.svg">
+    <img alt="wisp" src="docs/logo/wisp-logo.svg" height="64">
+  </picture>
+</h1>
 
-A stealth VPN that hides in plain sight. Your traffic looks like normal HTTPS browsing — undetectable by deep packet inspection, active probing, and traffic analysis.
+A stealth VPN that hides in plain sight. To the network, your traffic is ordinary HTTPS to an
+ordinary website. Wisp is built to resist deep packet inspection, active probing and traffic
+analysis.
 
 ## How it works
 
@@ -15,24 +22,34 @@ Your device ──HTTPS──> yoursite.com:443
                    VPN tunnel  Real website
 ```
 
-To the outside world, your server is just a normal website. Wisp sits behind TLS on port 443 and authenticates clients using the [Trojan protocol](https://trojan-gfw.github.io/trojan/). Failed authentication? The connection is silently forwarded to your real website — probers, scanners, and censors see nothing unusual.
+To the outside world, your server is just a website. Wisp listens for TLS on port 443 and
+authenticates clients with the [Trojan protocol](https://trojan-gfw.github.io/trojan/). A
+connection that doesn't authenticate is passed to your real website, so probers, scanners and
+censors see an ordinary site.
 
 ## Features
 
-- **Undetectable traffic** — TLS 1.3 with real certificates. Browser-identical TLS fingerprints via [uTLS](https://github.com/refraction-networking/utls)
-- **Active probe resistant** — Failed auth seamlessly falls through to your real website
-- **Multiple transports** — Direct TLS, WebSocket, or gRPC-style streaming
-- **Inner encryption** — ChaCha20-Poly1305 layer inside TLS (survives MITM with government CAs)
-- **Connection multiplexing** — Single persistent TLS connection, like a real browser
-- **Traffic camouflage** — Fake HTTP noise during idle periods defeats traffic analysis
-- **Multi-user** — Named users with per-user bandwidth quotas and speed limits
-- **iOS & Android** — Works with Shadowrocket, v2rayNG, and other Trojan-compatible clients
-- **Admin stats** — Real-time per-user traffic monitoring via Unix socket
-- **Zero config cover** — Serve a cover website directly or proxy to an existing one
+- **Looks like a browser.** TLS with a real certificate, and a client whose TLS handshake matches
+  Chrome's, Firefox's or Safari's, via [uTLS](https://github.com/refraction-networking/utls).
+- **Resists active probing.** Anyone who doesn't authenticate gets your website.
+- **Three transports.** Trojan straight over TLS, WebSocket, or an HTTP stream that looks like gRPC.
+- **Inner encryption (optional).** XChaCha20-Poly1305 inside TLS, with a key you share between
+  server and clients, so content stays private even if TLS is intercepted, for example with a
+  government-issued CA.
+- **Multiplexing.** The desktop client carries all its connections over one TLS connection, like
+  a browser.
+- **Noise.** The client sends a small random message every 2 to 8 seconds, so an idle tunnel
+  isn't silent.
+- **Multiple users.** Named users, each with an optional speed limit and data quota.
+- **Phones.** Shadowrocket, v2rayNG and other Trojan clients connect too.
+- **Stats.** Per-user traffic over a local Unix socket.
+- **Cover site.** Serve a directory of files, or pass visitors to a web server you already run.
 
 ## Quick start
 
 ### 1. Build
+
+Requires Go 1.26 or newer.
 
 ```bash
 # Server (Linux)
@@ -45,20 +62,28 @@ go build -o wisp-client ./cmd/client
 GOOS=windows GOARCH=amd64 go build -o wisp-client.exe ./cmd/client
 ```
 
-### 2. Server setup
+### 2. Set up the server
 
-Get a VPS, point a domain at it, then:
+Get a VPS and point a domain at it. On Debian or Ubuntu, `scripts/install.sh` does the rest:
+the certificate, a cover site behind Caddy, the config and a systemd service. Run it from the
+checkout, with `wisp-server` built in the checkout's top directory:
 
 ```bash
-# Get TLS certificate
-certbot certonly --standalone -d yourdomain.com
+sudo ./scripts/install.sh -d yourdomain.com -p 'a-long-random-password'
+```
 
-# Create config
-cp configs/server.example.yaml /etc/wisp/server.yaml
-# Edit with your domain, cert paths, and passwords
+Or by hand:
 
-# Run
-./wisp-server -config /etc/wisp/server.yaml
+```bash
+# A TLS certificate
+sudo certbot certonly --standalone -d yourdomain.com
+
+# The config: set your domain, certificate paths and passwords
+sudo mkdir -p /etc/wisp
+sudo cp configs/server.example.yaml /etc/wisp/server.yaml
+
+# Run (port 443 needs root, or CAP_NET_BIND_SERVICE)
+sudo ./wisp-server -config /etc/wisp/server.yaml
 ```
 
 ### 3. Connect
@@ -67,7 +92,7 @@ cp configs/server.example.yaml /etc/wisp/server.yaml
 ```bash
 ./wisp-client -config client.yaml
 # SOCKS5 proxy now running on 127.0.0.1:1080
-# Configure your browser/system to use it
+# Point your browser or system proxy settings at it
 ```
 
 **iPhone (Shadowrocket):**
@@ -78,6 +103,9 @@ cp configs/server.example.yaml /etc/wisp/server.yaml
 **Android (v2rayNG):**
 - Add server → Trojan
 - Same settings as above
+
+Phone apps speak plain Trojan over TLS: they don't use the WebSocket or gRPC transports, the
+inner encryption or multiplexing.
 
 ## Configuration
 
@@ -95,19 +123,27 @@ users:
     password: "strong-random-password"
   - name: "bob"
     password: "another-password"
-    max_speed: "10MB"       # 10 MB/s speed cap (optional)
-    max_bandwidth: "50GB"   # Monthly quota (optional)
+    max_speed: "10MB"       # 10 MB/s, shared by all of bob's connections (optional)
+    max_bandwidth: "50GB"   # Data quota, counted since the server started (optional)
 
-fallback: "127.0.0.1:80"   # Your real website
+fallback: "127.0.0.1:80"        # Your real website
+fallback_h2: "127.0.0.1:8080"   # The same site over HTTP/2 without TLS (h2c), optional
 
 websocket:
   enabled: true
-  path: "/api/v1/stream"
+  path: "/api/v1/stream"    # Pick your own: anyone who knows it gets past the cover site
 
 encryption:
   enabled: true
-  key: "shared-secret-key"
+  key: "shared-secret-key"  # A long random string, the same on every client
 ```
+
+Instead of `users`, a plain `passwords:` list works too; its traffic shows up as "anonymous".
+`cover_site: /path/to/site` serves HTTP visitors from a directory of files instead of `fallback`.
+
+Browsers ask for HTTP/2. Wisp offers it only when `fallback_h2` points at a server that speaks
+HTTP/2 without TLS (Caddy with `protocols h1 h2c`, as `scripts/install.sh` sets it up); without it,
+browsers use HTTP/1.1.
 
 ### Client
 
@@ -116,108 +152,127 @@ server: "yourdomain.com:443"
 password: "strong-random-password"
 sni: "yourdomain.com"
 listen: "127.0.0.1:1080"
-fingerprint: "chrome"       # chrome, firefox, safari, edge, ios
-transport: "grpc"           # tls, ws, grpc
-ws_path: "/api/v1/stream"
+fingerprint: "chrome"       # chrome, firefox, safari, edge, ios or random
+transport: "tls"            # tls (the default), ws or grpc
+ws_path: "/api/v1/stream"   # The server's websocket path, for ws and grpc
 
 encryption:
   enabled: true
   key: "shared-secret-key"
 ```
 
-### Transport modes
+### Transports
 
-| Mode | DPI sees | Speed | Best for |
-|------|----------|-------|----------|
-| `tls` | HTTPS connection | Fastest | Default use |
-| `ws` | WebSocket upgrade | Fast | CDN compatibility |
-| `grpc` | gRPC API stream | Fast | Maximum stealth |
+Each one runs inside TLS, so on the wire all three look like HTTPS to your site.
+
+| Transport | Inside TLS | Use it |
+|------|----------|-------|
+| `tls` | A Trojan header, then the tunnel | By default: fastest |
+| `ws` | A WebSocket upgrade on your path | Behind a CDN that passes WebSockets |
+| `grpc` | An HTTP POST on your path, answered like gRPC | Where WebSockets get blocked |
 
 ## Monitoring
 
-Check per-user traffic stats:
+Check per-user traffic:
 
 ```bash
 sudo curl -s --unix-socket /run/wisp-admin.sock http://localhost/stats/text
 ```
 
 ```
-User          Upload      Download    Quota                    Conns  Last seen
-alice         up: 1.2 GB  down: 8.4 GB  quota: unlimited       45     2s
-bob           up: 500 MB  down: 2.1 GB  quota: 2.6 GB / 50 GB  12     1m30s
+User          Upload      Download    Quota                       Conns  Last seen
+alice         1.2 GB      8.4 GB      unlimited                      45  2s
+bob           500.0 MB    2.1 GB      2.6 GB / 50.0 GB (5%)          12  1m30s
 ```
 
-JSON endpoint also available at `/stats`.
+The same as JSON at `/stats`.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   Client                         │
-│                                                  │
-│  App → SOCKS5 → [Trojan] → [Encryption] → [Mux] │
-│                     ↓                             │
-│              [Transport: TLS/WS/gRPC]             │
-│                     ↓                             │
-│              [uTLS: Chrome fingerprint]            │
-└─────────────────┬───────────────────────────────┘
-                  │ Looks like normal HTTPS
-                  ▼
-┌─────────────────────────────────────────────────┐
-│                   Server (:443)                   │
-│                                                   │
-│  TLS termination (real Let's Encrypt cert)        │
-│       ↓                                           │
-│  HTTP? → [Cover website / Fallback]               │
-│  Auth OK? → [Encryption] → [Mux] → [Proxy]       │
-│       ↓                              ↓            │
-│  Per-user stats + speed limiting    Internet      │
-└───────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                       Client                        │
+│                                                     │
+│  App → SOCKS5 → [Trojan request per connection]     │
+│                  → [Mux] → [Inner encryption]       │
+│                  → [Transport: TLS / WS / gRPC]     │
+│                  → [uTLS: a browser's handshake]    │
+└──────────────────────────┬──────────────────────────┘
+                           │ Looks like normal HTTPS
+                           ▼
+┌─────────────────────────────────────────────────────┐
+│                   Server (:443)                     │
+│                                                     │
+│  TLS (a real certificate, e.g. Let's Encrypt)       │
+│    → not authenticated: [cover site / fallback]     │
+│    → authenticated: [Inner encryption] → [Mux]      │
+│        → [Per-user stats and limits] → Internet     │
+└─────────────────────────────────────────────────────┘
 ```
 
 ## Detection resistance
 
-| Technique | What it defeats |
+| Technique | What it counters |
 |-----------|----------------|
-| TLS 1.3 + real cert | Content inspection |
-| uTLS browser fingerprint | TLS ClientHello fingerprinting (TSPU) |
-| Cover website fallback | Active probing |
-| gRPC/WebSocket transport | Protocol detection |
-| ChaCha20 inner encryption | Government CA MITM attacks |
-| Connection multiplexing | Connection pattern analysis |
-| Traffic noise injection | Idle traffic analysis |
-| ALPN negotiation | ALPN-based filtering |
+| TLS with a real certificate | Reading the traffic |
+| uTLS browser handshake | TLS ClientHello fingerprinting (e.g. Russia's TSPU) |
+| Cover site for anyone who doesn't authenticate | Active probing |
+| WebSocket and gRPC-style transports | Networks and CDNs that only pass web traffic |
+| Inner encryption | Reading traffic through intercepted TLS (government CAs) |
+| Multiplexing | Patterns in how many connections a client opens |
+| Noise | Telling an idle tunnel from a busy one |
+| HTTP/2 offered only with an HTTP/2 cover site | Probes that try HTTP/2 |
+
+## Limits
+
+- **TLS inside TLS.** Browsing HTTPS sites through any TLS tunnel shows a pattern: the inner
+  handshakes' sizes and timing. Wisp doesn't pad traffic to hide it yet.
+- **The WebSocket path is a password.** Anyone who knows it gets an upgrade instead of the cover
+  site. Pick your own, and don't reuse the one in this README.
+- **The install script's cover page** is the same on every server it installs, which makes them
+  easy to find. Replace it with a site of your own.
+- **Inner encryption** keeps content private from someone who intercepts TLS, but they can still
+  tell it isn't a normal website. The key is one SHA-256 of the configured string, so make it long
+  and random.
+- **Noise** goes out every 2 to 8 seconds, all day, from client to server only. A browser doesn't
+  do that, so it can stand out as much as it hides.
+- **Quotas** are counted in memory: they start over when the server restarts.
+- **Browser fingerprints** come from uTLS and are only as current as the uTLS version wisp was
+  built with.
 
 ## Deployment tips
 
-- **Domain**: Use a normal-looking domain (`.com`, `.io`, `.agency`). Register through a non-local registrar
-- **VPS**: Hetzner, Oracle Cloud, or any provider whose IPs aren't mass-blocked in your region
-- **Cover site**: Run a real website (WordPress, blog, business page) on the same server
-- **Port**: Only expose port 443. No other ports should be open
-- **Cert renewal**: Certbot auto-renews. Add pre/post hooks if another service uses port 80
+- **Domain**: Use a normal-looking domain (`.com`, `.io`, `.agency`). Register it through a
+  registrar outside your country.
+- **VPS**: Hetzner, Oracle Cloud, or any provider whose IPs aren't mass-blocked in your region.
+- **Cover site**: Run a real website (WordPress, a blog, a business page) on the same server.
+- **Port**: Only expose port 443. Close everything else.
+- **Cert renewal**: Certbot renews automatically. Add pre/post hooks if another service uses port 80.
 
 ## Building from source
 
-Requires Go 1.22+.
+Requires Go 1.26 or newer.
 
 ```bash
 git clone https://github.com/olegnazarov23/wisp.git
 cd wisp
-go build ./...
+go build -o wisp-server ./cmd/server
+go build -o wisp-client ./cmd/client
+go test ./...
 ```
 
 ## Related projects
 
 Wisp stands on the shoulders of these projects and draws inspiration from the broader anti-censorship community:
 
-- **[Trojan-GFW](https://github.com/trojan-gfw/trojan)** — The original Trojan protocol that proved "look like HTTPS" is the best strategy. Wisp implements a compatible protocol
-- **[Xray-core](https://github.com/XTLS/Xray-core)** — Feature-rich proxy platform with VLESS, REALITY, and XTLS. The gold standard for censorship circumvention in China
-- **[Shadowsocks](https://github.com/shadowsocks/shadowsocks-rust)** — The project that started it all. Pioneered encrypted proxy protocols for bypassing the GFW
-- **[uTLS](https://github.com/refraction-networking/utls)** — Makes Go TLS handshakes indistinguishable from real browsers. Critical for defeating TLS fingerprinting
-- **[Cloak](https://github.com/cbeuw/Cloak)** — Pluggable transport that multiplexes VPN traffic through TLS tunnels with active probe resistance
-- **[Sing-box](https://github.com/SagerNet/sing-box)** — Universal proxy platform with wide protocol support and excellent mobile clients
-- **[V2Ray](https://github.com/v2fly/v2ray-core)** — Mature proxy platform with VMess protocol and extensive transport options
-- **[Tor](https://www.torproject.org/)** — The original censorship resistance network. Different threat model but shared mission
+- **[Trojan](https://github.com/trojan-gfw/trojan)**: the original Trojan protocol, which showed that looking like HTTPS works. Wisp implements a compatible protocol.
+- **[Xray-core](https://github.com/XTLS/Xray-core)**: a feature-rich proxy platform with VLESS, REALITY and XTLS, widely used against the Great Firewall.
+- **[Shadowsocks](https://github.com/shadowsocks/shadowsocks-rust)**: the project that pioneered encrypted proxy protocols for getting past the Great Firewall.
+- **[uTLS](https://github.com/refraction-networking/utls)**: makes Go's TLS handshakes match real browsers', which defeats TLS fingerprinting.
+- **[Cloak](https://github.com/cbeuw/Cloak)**: a pluggable transport that multiplexes traffic through TLS with active-probe resistance.
+- **[sing-box](https://github.com/SagerNet/sing-box)**: a universal proxy platform with wide protocol support and good mobile clients.
+- **[V2Ray](https://github.com/v2fly/v2ray-core)**: a mature proxy platform with the VMess protocol and many transports.
+- **[Tor](https://www.torproject.org/)**: the original censorship-resistance network. A different threat model, but a shared mission.
 
 ### Compatible clients
 
@@ -227,11 +282,12 @@ Wisp stands on the shoulders of these projects and draws inspiration from the br
 | iOS | [Quantumult X](https://apps.apple.com/app/quantumult-x/id1443988620) | Trojan |
 | Android | [v2rayNG](https://github.com/2dust/v2rayNG) | Trojan |
 | Android | [NekoBox](https://github.com/MatsuriDayo/NekoBoxForAndroid) | Trojan |
-| Windows/macOS/Linux | Wisp client (this repo) | Full (mux + encryption) |
+| Windows/macOS/Linux | Wisp client (this repo) | Everything: transports, mux, inner encryption |
 
 ## Contributing
 
-Contributions welcome. If you're in a country with internet censorship and have ideas for improving detection resistance, please open an issue or PR.
+Contributions welcome. If you're in a country with internet censorship and have ideas for
+improving detection resistance, please open an issue or a pull request.
 
 ## License
 

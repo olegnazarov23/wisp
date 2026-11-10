@@ -12,21 +12,25 @@ users:
     password: "generate-a-strong-random-password"
   - name: "bob"
     password: "another-strong-random-password"
-    max_speed: "10MB"       # 10 MB/s speed limit (optional)
-    max_bandwidth: "50GB"   # 50 GB monthly quota (optional)
+    max_speed: "10MB"       # 10 MB/s, shared by all of bob's connections (optional)
+    max_bandwidth: "50GB"   # 50 GB quota, counted since the server started (optional)
 
 # Where to forward non-VPN traffic (cover website / existing web server).
 # Anyone probing your server sees a normal website.
 fallback: "127.0.0.1:80"
 
-# WebSocket/gRPC transport endpoint.
-# VPN clients connect here; everyone else sees a normal API path.
+# The same site over HTTP/2 without TLS (h2c), optional. Browsers ask for HTTP/2; wisp offers it
+# only when this is set (Caddy: the global option `servers { protocols h1 h2c }`).
+# fallback_h2: "127.0.0.1:80"
+
+# WebSocket/gRPC transport endpoint. Pick your own path: anyone who knows it gets an upgrade
+# instead of the cover site.
 websocket:
   enabled: true
   path: "/api/v1/stream"
 
-# Inner encryption layer (optional but recommended).
-# Protects against TLS MITM attacks (e.g., government-issued CA certs).
+# Inner encryption layer (optional but recommended): keeps content private if TLS is
+# intercepted (e.g., with a government-issued CA). Use a long random key.
 encryption:
   enabled: true
   key: "generate-a-random-encryption-key"
