@@ -136,10 +136,14 @@ websocket:
 encryption:
   enabled: true
   key: "shared-secret-key"  # A long random string, the same on every client
+
+allow_private: false        # true lets users reach the server's own network (optional)
 ```
 
 Instead of `users`, a plain `passwords:` list works too; its traffic shows up as "anonymous".
 `cover_site: /path/to/site` serves HTTP visitors from a directory of files instead of `fallback`.
+Users can't reach loopback, private or link-local addresses through the server (its own services,
+its LAN, the cloud's metadata endpoint) unless `allow_private` is true.
 
 Browsers ask for HTTP/2. Wisp offers it only when `fallback_h2` points at a server that speaks
 HTTP/2 without TLS (Caddy with `protocols h1 h2c`, as `scripts/install.sh` sets it up); without it,
@@ -232,11 +236,13 @@ The same as JSON at `/stats`.
 - **The install script's cover page** is the same on every server it installs, which makes them
   easy to find. Replace it with a site of your own.
 - **Inner encryption** keeps content private from someone who intercepts TLS, but they can still
-  tell it isn't a normal website. The key is one SHA-256 of the configured string, so make it long
-  and random.
+  tell it isn't a normal website. All users share one key, there's no forward secrecy, and frames
+  aren't numbered, so an interceptor can replay or reorder them. The key is one SHA-256 of the
+  configured string: make it long and random.
 - **Noise** goes out every 2 to 8 seconds, all day, from client to server only. A browser doesn't
   do that, so it can stand out as much as it hides.
-- **Quotas** are counted in memory: they start over when the server restarts.
+- **Quotas** are counted in memory and checked when a connection opens: they start over when the
+  server restarts.
 - **Browser fingerprints** come from uTLS and are only as current as the uTLS version wisp was
   built with.
 
@@ -247,7 +253,8 @@ The same as JSON at `/stats`.
 - **VPS**: Hetzner, Oracle Cloud, or any provider whose IPs aren't mass-blocked in your region.
 - **Cover site**: Run a real website (WordPress, a blog, a business page) on the same server.
 - **Port**: Only expose port 443. Close everything else.
-- **Cert renewal**: Certbot renews automatically. Add pre/post hooks if another service uses port 80.
+- **Cert renewal**: Certbot renews automatically, and wisp picks up the new certificate within a
+  minute. Add pre/post hooks if another service uses port 80.
 
 ## Building from source
 
