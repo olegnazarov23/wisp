@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/olegnazarov23/wisp/internal/camouflage"
 	vpncrypto "github.com/olegnazarov23/wisp/internal/crypto"
@@ -101,6 +102,9 @@ func (s *SOCKS5Server) dialTransport() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	// the upgrade, too, gets an answer in time or the session isn't opened
+	tlsConn.SetDeadline(time.Now().Add(15 * time.Second))
+	defer tlsConn.SetDeadline(time.Time{})
 
 	switch s.Transport {
 	case "ws":

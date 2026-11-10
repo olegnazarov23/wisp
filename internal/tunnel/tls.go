@@ -4,7 +4,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net"
+	"os"
+	"sync"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -20,15 +23,15 @@ var RootCAs *x509.CertPool
 //   - ALPN offers h2 only with h2 true, when the cover site can answer HTTP/2: a browser that
 //     negotiated h2 and got an HTTP/1.1 reply would show an error, to visitors and probes alike
 func NewTLSListener(addr, certFile, keyFile string, h2 bool) (net.Listener, error) {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
+	certs := &certReloader{certFile: certFile, keyFile: keyFile}
+	if _, err := certs.get(nil); err != nil {
 		return nil, fmt.Errorf("load certificate: %w", err)
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12, // Accept TLS 1.2 too — TLS 1.3-only is suspicious.
-		NextProtos:   []string{"http/1.1"},
+		GetCertificate: certs.get,
+		MinVersion:     tls.VersionTLS12, // Accept TLS 1.2 too — TLS 1.3-only is suspicious.
+		NextProtos:     []string{"http/1.1"},
 	}
 	if h2 {
 		tlsConfig.NextProtos = []string{"h2", "http/1.1"}
@@ -41,6 +44,50 @@ func NewTLSListener(addr, certFile, keyFile string, h2 bool) (net.Listener, erro
 
 	return listener, nil
 }
+
+// certReloader serves the certificate from its files and reads them again when they change, so a
+// renewal (certbot replaces them every 60 days or so) takes effect without a restart.
+type certReloader struct {
+	certFile, keyFile string
+
+	mu      sync.Mutex
+	cert    *tls.Certificate
+	modTime time.Time
+	checked time.Time
+}
+
+func (r *certReloader) get(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cert != nil && time.Since(r.checked) < time.Minute {
+		return r.cert, nil
+	}
+	r.checked = time.Now()
+	fi, err := os.Stat(r.certFile) // follows certbot's symlinks into archive/
+	if err == nil && r.cert != nil && fi.ModTime().Equal(r.modTime) {
+		return r.cert, nil
+	}
+	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
+	if err != nil {
+		if r.cert != nil {
+			log.Printf("reload certificate: %v; keeping the one loaded", err)
+			return r.cert, nil
+		}
+		return nil, err
+	}
+	if r.cert != nil {
+		log.Printf("certificate reloaded from %s", r.certFile)
+	}
+	r.cert = &cert
+	if fi != nil {
+		r.modTime = fi.ModTime()
+	}
+	return r.cert, nil
+}
+
+// handshakeTimeout bounds a TLS handshake: some networks let the TCP connection through and then
+// drop every packet, and the client would wait forever.
+const handshakeTimeout = 15 * time.Second
 
 // DialTLS connects to a remote server using uTLS to produce a TLS ClientHello
 // that is byte-identical to a real browser. This is critical for defeating
@@ -69,11 +116,13 @@ func DialTLS(addr, sni, fingerprint string) (net.Conn, error) {
 	}
 
 	uConn := utls.UClient(rawConn, tlsConfig, clientHelloID)
+	rawConn.SetDeadline(time.Now().Add(handshakeTimeout))
 
 	if err := uConn.Handshake(); err != nil {
 		rawConn.Close()
 		return nil, fmt.Errorf("tls handshake: %w", err)
 	}
+	rawConn.SetDeadline(time.Time{})
 
 	return uConn, nil
 }
@@ -95,10 +144,12 @@ func DialTLSWithDialer(dialer *net.Dialer, addr, sni, fingerprint string) (net.C
 	}
 
 	uConn := utls.UClient(rawConn, tlsConfig, clientHelloID)
+	rawConn.SetDeadline(time.Now().Add(handshakeTimeout))
 	if err := uConn.Handshake(); err != nil {
 		rawConn.Close()
 		return nil, fmt.Errorf("tls handshake: %w", err)
 	}
+	rawConn.SetDeadline(time.Time{})
 
 	return uConn, nil
 }
