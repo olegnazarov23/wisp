@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -286,7 +287,120 @@ func TestClosePropagates(t *testing.T) {
 	}
 }
 
+// With pins, the client connects only to a server whose certificate carries a pinned key: TLS
+// interception with a CA the system trusts fails.
+func TestPins(t *testing.T) {
+	env := newEnv(t, false)
+	addr := env.server(t, "")
+	cert, err := tls.LoadX509KeyPair(env.certFile, env.keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, _ := x509.ParseCertificate(cert.Certificate[0])
+
+	for name, pins := range map[string][]string{
+		"pinned":       {tunnel.Pin(leaf)},
+		"backup first": {"sha256/" + strings.Repeat("A", 43) + "=", tunnel.Pin(leaf)},
+		"another key":  {"sha256/" + strings.Repeat("A", 43) + "="},
+	} {
+		t.Run(name, func(t *testing.T) {
+			conn, err := tunnel.DialTLS(addr, "wisp.test", "chrome", pins)
+			if name == "another key" {
+				if err == nil {
+					conn.Close()
+					t.Fatal("connected to a server whose key isn't pinned")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn.Close()
+		})
+	}
+}
+
+// The client replaces its connection when it's due, keeps the old one until its streams end, and
+// never holds more than two.
+func TestRotation(t *testing.T) {
+	env := newEnv(t, false)
+	addr := env.server(t, innerKey)
+	client := &proxy.SOCKS5Server{
+		ServerAddr: addr, SNI: "wisp.test", Fingerprint: "chrome", Transport: "tls",
+		PasswordHash: config.HashPassword(alicePassword), EncryptionKey: innerKey,
+		RotateAfter: 100 * time.Millisecond, // so 100 to 200 ms
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go client.Serve(l)
+
+	echo := func(c net.Conn, msg string) {
+		t.Helper()
+		if _, err := c.Write([]byte(msg)); err != nil {
+			t.Fatal(err)
+		}
+		if got := readN(t, c, len(msg)); string(got) != msg {
+			t.Fatalf("echo: got %q", got)
+		}
+	}
+
+	long := socksConnect(t, l.Addr().String(), env.echo) // stays open across rotations
+	echo(long, "first")
+	time.Sleep(300 * time.Millisecond)
+	second := socksConnect(t, l.Addr().String(), env.echo) // due: a new connection
+	echo(second, "second")
+	if n := env.accepts.Load(); n != 2 {
+		t.Fatalf("%d connections after the first rotation, want 2", n)
+	}
+	time.Sleep(300 * time.Millisecond)
+	third := socksConnect(t, l.Addr().String(), env.echo) // due again, but the first still drains
+	echo(third, "third")
+	echo(long, "still there")
+	if n := env.accepts.Load(); n != 2 {
+		t.Fatalf("%d connections while the first drains, want 2", n)
+	}
+
+	long.Close()
+	time.Sleep(300 * time.Millisecond)
+	fourth := socksConnect(t, l.Addr().String(), env.echo)
+	echo(fourth, "fourth")
+	if n := env.accepts.Load(); n != 3 {
+		t.Fatalf("%d connections once the first closed, want 3", n)
+	}
+}
+
+// When wisp serves the cover site itself, replies look like a web server's: keep-alive, a Date
+// and a Server header.
+func TestCoverSite(t *testing.T) {
+	env := newEnv(t, false)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<p>hello from the cover site</p>"), 0o644)
+	addr := env.server(t, "", func(h *Handler) { h.CoverSiteDir = dir })
+
+	c := env.dialTLS(t, addr, "http/1.1")
+	c.Write([]byte("GET / HTTP/1.1\r\nHost: wisp.test\r\n\r\nGET /index.html HTTP/1.1\r\nHost: wisp.test\r\nConnection: close\r\n\r\n"))
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	reply, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// two responses on one connection (/index.html redirects to ./, as net/http's file server does)
+	r := string(reply)
+	if strings.Count(r, "HTTP/1.1 ") != 2 || !strings.Contains(r, "hello from the cover site") {
+		t.Fatalf("want the page and a second response on one connection, got %q", r)
+	}
+	for _, h := range []string{"\r\nDate: ", "\r\nServer: Caddy\r\n"} {
+		if strings.Count(r, h) != 2 {
+			t.Fatalf("want %q in both responses, got %q", h, r)
+		}
+	}
+}
+
 type env struct {
+	accepts           atomic.Int64 // TLS connections the servers accepted
 	roots             *x509.CertPool
 	certFile, keyFile string
 	cover, coverH2    string
@@ -353,6 +467,7 @@ func (e *env) server(t *testing.T, encKey string, opts ...func(*Handler)) string
 			if err != nil {
 				return
 			}
+			e.accepts.Add(1)
 			go h.Handle(c)
 		}
 	}()
