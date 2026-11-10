@@ -154,23 +154,17 @@ func DialTLSWithDialer(dialer *net.Dialer, addr, sni, fingerprint string) (net.C
 	return uConn, nil
 }
 
-// selectFingerprint maps a fingerprint name to a uTLS ClientHelloID.
-// For Russia, "chrome" is the safest — Chrome is the most popular browser.
+// selectFingerprint maps a fingerprint name to a uTLS ClientHelloID. The presets are uTLS's
+// current browsers (Chrome 155, Firefox 148, Safari 26.3): an old browser's handshake is rare
+// enough to stand out, and censors single some out (Russia's TSPU blocks uTLS's Chrome 133). Edge
+// is Chromium, so it gets Chrome's handshake; iOS gets Safari's.
 func selectFingerprint(name string) utls.ClientHelloID {
 	switch name {
-	case "chrome":
-		return utls.HelloChrome_Auto
 	case "firefox":
 		return utls.HelloFirefox_Auto
-	case "safari":
+	case "safari", "ios":
 		return utls.HelloSafari_Auto
-	case "edge":
-		return utls.HelloEdge_Auto
-	case "ios":
-		return utls.HelloIOS_Auto
-	case "random":
-		return utls.HelloRandomized
-	default:
+	default: // chrome, edge
 		return utls.HelloChrome_Auto
 	}
 }

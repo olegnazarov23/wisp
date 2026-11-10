@@ -49,7 +49,7 @@ censors see an ordinary site.
 
 ### 1. Build
 
-Requires Go 1.26 or newer.
+Requires Go 1.27 or newer.
 
 ```bash
 # Server (Linux)
@@ -156,7 +156,7 @@ server: "yourdomain.com:443"
 password: "strong-random-password"
 sni: "yourdomain.com"
 listen: "127.0.0.1:1080"
-fingerprint: "chrome"       # chrome, firefox, safari, edge, ios or random
+fingerprint: "chrome"       # chrome (Chrome 155), firefox (148) or safari (26.3)
 transport: "tls"            # tls (the default), ws or grpc
 ws_path: "/api/v1/stream"   # The server's websocket path, for ws and grpc
 
@@ -258,7 +258,7 @@ The same as JSON at `/stats`.
 
 ## Building from source
 
-Requires Go 1.26 or newer.
+Requires Go 1.27 or newer.
 
 ```bash
 git clone https://github.com/olegnazarov23/wisp.git

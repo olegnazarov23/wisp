@@ -8,7 +8,7 @@ sni: "yourdomain.com"
 # Point your browser or system proxy settings here.
 listen: "127.0.0.1:1080"
 
-# TLS fingerprint to mimic: chrome, firefox, safari, edge, ios or random
+# TLS fingerprint to mimic: chrome (Chrome 155), firefox (Firefox 148) or safari (Safari 26.3)
 fingerprint: "chrome"
 
 # Transport mode:
