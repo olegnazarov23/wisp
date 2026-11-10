@@ -2,9 +2,11 @@ package config
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,6 +24,8 @@ type ServerConfig struct {
 	Encryption *EncryptionConfig `yaml:"encryption"`
 	// AllowPrivate lets users reach loopback, private and link-local addresses through the server.
 	AllowPrivate bool `yaml:"allow_private"`
+	// Debug logs where users connect when that fails; otherwise destinations stay out of logs.
+	Debug bool `yaml:"debug"`
 
 	// Pre-computed password hashes (not from YAML).
 	PasswordHashes map[string]bool   `yaml:"-"`
@@ -66,6 +70,12 @@ type ClientConfig struct {
 	Transport   string            `yaml:"transport"` // "tls", "ws" (WebSocket), or "grpc" (HTTP/2-style).
 	WSPath      string            `yaml:"ws_path"`   // WebSocket/gRPC path (must match server).
 	Encryption  *EncryptionConfig `yaml:"encryption"`
+	// Pins are keys the server's certificate must carry, "sha256/<base64>" (wisp-server -pin).
+	Pins []string `yaml:"pins"`
+	// Noise sends small random messages every few seconds.
+	Noise bool `yaml:"noise"`
+	// Rotate replaces the connection every 10 to 20 minutes or 128 to 256 MB (default true).
+	Rotate *bool `yaml:"rotate"`
 
 	// Pre-computed password hash (not from YAML).
 	PasswordHash string `yaml:"-"`
@@ -151,6 +161,16 @@ func LoadClientConfig(path string) (*ClientConfig, error) {
 
 	if cfg.Encryption != nil && cfg.Encryption.Enabled && cfg.Encryption.Key == "" {
 		return nil, fmt.Errorf("encryption is enabled without a key")
+	}
+	for _, p := range cfg.Pins {
+		key, ok := strings.CutPrefix(p, "sha256/")
+		if b, err := base64.StdEncoding.DecodeString(key); !ok || err != nil || len(b) != sha256.Size {
+			return nil, fmt.Errorf("pin %q isn't sha256/ and a base64 SHA-256 (see wisp-server -pin)", p)
+		}
+	}
+	if cfg.Rotate == nil {
+		on := true
+		cfg.Rotate = &on
 	}
 	return &cfg, nil
 }

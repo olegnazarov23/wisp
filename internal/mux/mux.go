@@ -42,6 +42,8 @@ type Session struct {
 	writeMu  sync.Mutex // serializes writes to the underlying conn.
 	closed   atomic.Bool
 	closeCh  chan struct{}
+	bytes    atomic.Int64 // payload bytes both ways, for rotating the connection
+	draining atomic.Bool  // close once the last stream does
 }
 
 // NewClient creates a client-side mux session (uses odd stream IDs).
@@ -143,6 +145,7 @@ func (s *Session) readLoop() {
 			if _, err := io.ReadFull(s.conn, payload); err != nil {
 				return
 			}
+			s.bytes.Add(int64(length))
 		}
 
 		switch {
@@ -182,29 +185,50 @@ func (s *Session) readLoop() {
 }
 
 func (s *Session) writeFrame(streamID uint32, flags uint16, payload []byte) error {
-	hdr := make([]byte, headerSize)
-	binary.BigEndian.PutUint32(hdr[0:4], streamID)
-	binary.BigEndian.PutUint16(hdr[4:6], flags)
-	binary.BigEndian.PutUint16(hdr[6:8], uint16(len(payload)))
+	// one write per frame: a header written on its own became a TLS record of its own, a small
+	// fixed-size record for every frame
+	frame := make([]byte, headerSize+len(payload))
+	binary.BigEndian.PutUint32(frame[0:4], streamID)
+	binary.BigEndian.PutUint16(frame[4:6], flags)
+	binary.BigEndian.PutUint16(frame[6:8], uint16(len(payload)))
+	copy(frame[headerSize:], payload)
+	s.bytes.Add(int64(len(payload)))
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	if _, err := s.conn.Write(hdr); err != nil {
-		return err
+	_, err := s.conn.Write(frame)
+	return err
+}
+
+// Bytes is the payload carried both ways so far.
+func (s *Session) Bytes() int64 {
+	return s.bytes.Load()
+}
+
+// Streams is the number of open streams.
+func (s *Session) Streams() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.streams)
+}
+
+// Drain closes the session once its last open stream closes: no new streams go to it.
+func (s *Session) Drain() {
+	s.draining.Store(true)
+	if s.Streams() == 0 {
+		s.Close()
 	}
-	if len(payload) > 0 {
-		if _, err := s.conn.Write(payload); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *Session) removeStream(id uint32) {
 	s.mu.Lock()
 	delete(s.streams, id)
+	idle := len(s.streams) == 0
 	s.mu.Unlock()
+	if idle && s.draining.Load() {
+		go s.Close()
+	}
 }
 
 // Stream is a single logical connection within a mux session.

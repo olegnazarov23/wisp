@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"time"
@@ -37,10 +38,19 @@ type SOCKS5Server struct {
 	Transport     string // "tls", "ws", or "grpc".
 	WSPath        string
 	EncryptionKey string
-	EnableNoise   bool // Send fake traffic to blend in.
+	EnableNoise   bool     // Send fake traffic to blend in.
+	Pins          []string // keys the server's certificate must carry (tunnel.Pin), if any
+	// The connection is replaced after RotateAfter to twice that, or after RotateBytes to twice
+	// that carried, whichever comes first (zero: never). A browser doesn't keep one connection
+	// to a site for hours or gigabytes.
+	RotateAfter time.Duration
+	RotateBytes int64
 
 	// Mux session management — one persistent connection, many streams.
 	muxSession *mux.Session
+	draining   *mux.Session // the one before, until its last stream closes
+	life       time.Time    // when muxSession is due for replacing
+	byteLimit  int64
 	muxMu      sync.Mutex
 	noise      *camouflage.NoiseGenerator
 }
@@ -52,7 +62,14 @@ func (s *SOCKS5Server) getMuxSession() (*mux.Session, error) {
 	defer s.muxMu.Unlock()
 
 	if s.muxSession != nil && !s.muxSession.IsClosed() {
-		return s.muxSession, nil
+		// keep it unless it's due, and never more than two connections: wait for the one
+		// before to finish draining
+		if !s.due() || (s.draining != nil && !s.draining.IsClosed()) {
+			return s.muxSession, nil
+		}
+		s.draining = s.muxSession
+		s.draining.Drain()
+		s.muxSession = nil
 	}
 
 	// Establish a new connection.
@@ -72,6 +89,8 @@ func (s *SOCKS5Server) getMuxSession() (*mux.Session, error) {
 	}
 
 	s.muxSession = mux.NewClient(conn)
+	s.life = time.Now().Add(jitter(s.RotateAfter))
+	s.byteLimit = int64(jitter(time.Duration(s.RotateBytes)))
 	log.Printf("mux session established to %s", s.ServerAddr)
 
 	// Start noise generator if enabled.
@@ -96,9 +115,23 @@ func (s *SOCKS5Server) getMuxSession() (*mux.Session, error) {
 	return s.muxSession, nil
 }
 
+// due reports whether the current session should be replaced.
+func (s *SOCKS5Server) due() bool {
+	return (s.RotateAfter > 0 && time.Now().After(s.life)) ||
+		(s.RotateBytes > 0 && s.muxSession.Bytes() > s.byteLimit)
+}
+
+// jitter is a random duration from d to 2d.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	return d + rand.N(d)
+}
+
 // dialTransport establishes the underlying transport connection.
 func (s *SOCKS5Server) dialTransport() (net.Conn, error) {
-	tlsConn, err := tunnel.DialTLS(s.ServerAddr, s.SNI, s.Fingerprint)
+	tlsConn, err := tunnel.DialTLS(s.ServerAddr, s.SNI, s.Fingerprint, s.Pins)
 	if err != nil {
 		return nil, err
 	}

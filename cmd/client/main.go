@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 
 	"github.com/olegnazarov23/wisp/internal/proxy"
 	"github.com/olegnazarov23/wisp/pkg/config"
@@ -17,7 +18,8 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	log.Printf("connecting to %s (SNI: %s, fingerprint: %s)", cfg.Server, cfg.SNI, cfg.Fingerprint)
+	log.Printf("connecting to %s (SNI: %s, fingerprint: %s, pinned keys: %d, rotate: %v, noise: %v)",
+		cfg.Server, cfg.SNI, cfg.Fingerprint, len(cfg.Pins), *cfg.Rotate, cfg.Noise)
 
 	var encKey string
 	if cfg.Encryption != nil && cfg.Encryption.Enabled {
@@ -33,7 +35,12 @@ func main() {
 		Transport:     cfg.Transport,
 		WSPath:        cfg.WSPath,
 		EncryptionKey: encKey,
-		EnableNoise:   true, // Fake traffic to blend in.
+		EnableNoise:   cfg.Noise,
+		Pins:          cfg.Pins,
+	}
+	if *cfg.Rotate {
+		socks.RotateAfter = 10 * time.Minute
+		socks.RotateBytes = 128 << 20
 	}
 
 	log.Fatal(socks.ListenAndServe(cfg.Listen))

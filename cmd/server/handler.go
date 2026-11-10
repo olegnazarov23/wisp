@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,11 @@ type Handler struct {
 	// AllowPrivate lets users reach loopback, private and link-local addresses through the
 	// server: the server's own services, its LAN, cloud metadata.
 	AllowPrivate bool
+	// Debug logs failed destinations; otherwise logs say nothing about where users go.
+	Debug bool
+
+	coverOnce sync.Once
+	cover     *coverSite
 }
 
 // maxHead bounds the request head read to route an HTTP request.
@@ -139,9 +145,8 @@ func (h *Handler) handleHTTP(br *bufio.Reader, conn net.Conn) {
 	}
 
 	if h.CoverSiteDir != "" {
-		br.Discard(len(head))
 		conn.SetReadDeadline(time.Time{})
-		h.serveCoverSite(conn, req)
+		h.serveCoverSite(br, conn)
 		return
 	}
 	h.fallback(br, conn)
@@ -339,7 +344,9 @@ func (h *Handler) handleTCP(clientConn net.Conn, req *protocol.Request) {
 	target := req.Address()
 	destConn, err := h.dial("tcp", target)
 	if err != nil {
-		log.Printf("dial %s: %v", target, err)
+		if h.Debug {
+			log.Printf("dial %s: %v", target, err)
+		}
 		return
 	}
 	defer destConn.Close()
@@ -471,44 +478,58 @@ func pass(client, site net.Conn) {
 	<-done
 }
 
-// serveCoverSite serves a file from the cover website directory.
-func (h *Handler) serveCoverSite(conn net.Conn, req *http.Request) {
-	rw := &rawResponseWriter{conn: conn}
-	fs := http.FileServer(http.Dir(h.CoverSiteDir))
-	fs.ServeHTTP(rw, req)
+// serveCoverSite hands the connection, the request still unread in br, to the cover site's
+// HTTP server, and returns once that server has closed it.
+func (h *Handler) serveCoverSite(br *bufio.Reader, conn net.Conn) {
+	h.coverOnce.Do(func() { h.cover = newCoverSite(h.CoverSiteDir) })
+	h.cover.serve(&bufferedReadConn{Reader: br, Conn: conn})
 }
 
-type rawResponseWriter struct {
-	conn       net.Conn
-	header     http.Header
-	wroteHdr   bool
-	statusCode int
+// coverSite serves a directory with net/http's server, so its replies carry what a web server's
+// do (Date, a Server header, keep-alive, length framing) rather than a bare response that probes
+// can tell apart.
+type coverSite struct {
+	conns chan net.Conn
 }
 
-func (w *rawResponseWriter) Header() http.Header {
-	if w.header == nil {
-		w.header = make(http.Header)
+func newCoverSite(dir string) *coverSite {
+	c := &coverSite{conns: make(chan net.Conn)}
+	files := http.FileServer(http.Dir(dir))
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Server", "Caddy") // Caddy's TLS is Go's too
+			files.ServeHTTP(w, r)
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       5 * time.Minute, // Caddy's default
+		ErrorLog:          log.New(io.Discard, "", 0),
 	}
-	return w.header
+	go srv.Serve(c)
+	return c
 }
 
-func (w *rawResponseWriter) WriteHeader(code int) {
-	if w.wroteHdr {
-		return
-	}
-	w.wroteHdr = true
-	w.statusCode = code
-	statusText := http.StatusText(code)
-	fmt.Fprintf(w.conn, "HTTP/1.1 %d %s\r\n", code, statusText)
-	w.header.Write(w.conn)
-	fmt.Fprint(w.conn, "\r\n")
+// serve gives conn to the server and waits until the server closes it.
+func (c *coverSite) serve(conn net.Conn) {
+	done := make(chan struct{})
+	c.conns <- &closeNotify{Conn: conn, done: done}
+	<-done
 }
 
-func (w *rawResponseWriter) Write(b []byte) (int, error) {
-	if !w.wroteHdr {
-		w.WriteHeader(200)
-	}
-	return w.conn.Write(b)
+// The server takes its connections from serve, as from a listener.
+func (c *coverSite) Accept() (net.Conn, error) { return <-c.conns, nil }
+func (c *coverSite) Close() error              { return nil }
+func (c *coverSite) Addr() net.Addr            { return &net.TCPAddr{} }
+
+// closeNotify closes done when the connection is closed.
+type closeNotify struct {
+	net.Conn
+	done chan struct{}
+	once sync.Once
+}
+
+func (c *closeNotify) Close() error {
+	c.once.Do(func() { close(c.done) })
+	return c.Conn.Close()
 }
 
 func httpError(conn net.Conn, code int, msg string) {

@@ -1,8 +1,11 @@
 package tunnel
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -91,14 +94,20 @@ const handshakeTimeout = 15 * time.Second
 
 // DialTLS connects to a remote server using uTLS to produce a TLS ClientHello
 // that is byte-identical to a real browser. This is critical for defeating
-// Russia's TSPU DPI which fingerprints TLS handshakes.
-func DialTLS(addr, sni, fingerprint string) (net.Conn, error) {
+// Russia's TSPU DPI which fingerprints TLS handshakes. With pins, the server's
+// certificate must also carry one of the pinned keys.
+func DialTLS(addr, sni, fingerprint string, pins []string) (net.Conn, error) {
 	// Use a dialer with timeout and keepalive that mimics browser behavior.
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second, // Browsers use 30-45s keepalive.
 	}
+	return DialTLSWithDialer(dialer, addr, sni, fingerprint, pins)
+}
 
+// DialTLSWithDialer is like DialTLS but uses a custom dialer.
+// Useful for connecting through a specific network interface or local proxy.
+func DialTLSWithDialer(dialer *net.Dialer, addr, sni, fingerprint string, pins []string) (net.Conn, error) {
 	rawConn, err := dialer.Dial("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("tcp dial: %w", err)
@@ -114,10 +123,12 @@ func DialTLS(addr, sni, fingerprint string) (net.Conn, error) {
 		// Setting MinVersion here would alter the ClientHello fingerprint.
 		NextProtos: []string{"h2", "http/1.1"}, // ALPN like a real browser.
 	}
+	if len(pins) > 0 {
+		tlsConfig.VerifyPeerCertificate = verifyPins(pins)
+	}
 
 	uConn := utls.UClient(rawConn, tlsConfig, clientHelloID)
 	rawConn.SetDeadline(time.Now().Add(handshakeTimeout))
-
 	if err := uConn.Handshake(); err != nil {
 		rawConn.Close()
 		return nil, fmt.Errorf("tls handshake: %w", err)
@@ -127,31 +138,33 @@ func DialTLS(addr, sni, fingerprint string) (net.Conn, error) {
 	return uConn, nil
 }
 
-// DialTLSWithDialer is like DialTLS but uses a custom dialer.
-// Useful for connecting through a specific network interface or local proxy.
-func DialTLSWithDialer(dialer *net.Dialer, addr, sni, fingerprint string) (net.Conn, error) {
-	rawConn, err := dialer.Dial("tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("tcp dial: %w", err)
+// Pin is a certificate's pin: "sha256/" and the base64 SHA-256 of its public key, the format of
+// HTTP public key pinning. A certificate renewed with the same key keeps its pin.
+func Pin(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return "sha256/" + base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// verifyPins accepts the server's certificate only if its key is one of pins. It runs after the
+// usual checks, so a certificate from a CA the system trusts, a government's included, fails
+// unless its key is pinned: TLS interception fails instead of reading the tunnel.
+func verifyPins(pins []string) func([][]byte, [][]*x509.Certificate) error {
+	return func(raw [][]byte, _ [][]*x509.Certificate) error {
+		if len(raw) == 0 {
+			return errors.New("no server certificate")
+		}
+		leaf, err := x509.ParseCertificate(raw[0])
+		if err != nil {
+			return err
+		}
+		got := Pin(leaf)
+		for _, p := range pins {
+			if p == got {
+				return nil
+			}
+		}
+		return fmt.Errorf("the server's key %s isn't pinned: someone may be intercepting TLS", got)
 	}
-
-	clientHelloID := selectFingerprint(fingerprint)
-
-	tlsConfig := &utls.Config{
-		ServerName: sni,
-		RootCAs:    RootCAs,
-		NextProtos: []string{"h2", "http/1.1"},
-	}
-
-	uConn := utls.UClient(rawConn, tlsConfig, clientHelloID)
-	rawConn.SetDeadline(time.Now().Add(handshakeTimeout))
-	if err := uConn.Handshake(); err != nil {
-		rawConn.Close()
-		return nil, fmt.Errorf("tls handshake: %w", err)
-	}
-	rawConn.SetDeadline(time.Time{})
-
-	return uConn, nil
 }
 
 // selectFingerprint maps a fingerprint name to a uTLS ClientHelloID. The presets are uTLS's

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -15,11 +18,25 @@ import (
 
 func main() {
 	configPath := flag.String("config", "configs/server.yaml", "path to server config")
+	printPin := flag.Bool("pin", false, "print the pin of the configured certificate's key, for clients' pins, and exit")
 	flag.Parse()
 
 	cfg, err := config.LoadServerConfig(*configPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	if *printPin {
+		cert, err := tls.LoadX509KeyPair(cfg.TLS.Cert, cfg.TLS.Key)
+		if err != nil {
+			log.Fatalf("load certificate: %v", err)
+		}
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			log.Fatalf("parse certificate: %v", err)
+		}
+		fmt.Println(tunnel.Pin(leaf))
+		return
 	}
 
 	log.Printf("starting server on %s", cfg.Listen)
@@ -62,6 +79,7 @@ func main() {
 		UserNames:      cfg.UserNames,
 		UserSpeeds:     cfg.UserSpeeds,
 		AllowPrivate:   cfg.AllowPrivate,
+		Debug:          cfg.Debug,
 	}
 	if cfg.AllowPrivate {
 		log.Printf("users may reach private addresses through the server")
