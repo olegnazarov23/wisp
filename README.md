@@ -151,8 +151,9 @@ Users can't reach loopback, private or link-local addresses through the server (
 its LAN, the cloud's metadata endpoint) unless `allow_private` is true.
 
 Browsers ask for HTTP/2. Wisp offers it only when `fallback_h2` points at a server that speaks
-HTTP/2 without TLS (Caddy with `protocols h1 h2c`, as `scripts/install.sh` sets it up); without it,
-browsers use HTTP/1.1.
+HTTP/2 without TLS (Caddy with `protocols h1 h2c`, or Traefik, whose plain entrypoints do);
+without it, browsers use HTTP/1.1, and a client whose ALPN is set to `h2` alone is refused, so
+leave phone apps' ALPN empty or `h2,http/1.1`.
 
 ### Client
 
