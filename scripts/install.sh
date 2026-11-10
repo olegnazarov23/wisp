@@ -168,6 +168,8 @@ cat > /etc/caddy/Caddyfile <<CADDYEOF
 }
 
 :8080 {
+    # only wisp talks to it: keep 443 the one open port
+    bind 127.0.0.1
     root * /var/www/cover
     file_server
     header {
@@ -187,6 +189,7 @@ systemctl enable caddy
 # 5. Create the server config and install the binary.
 echo "[5/6] Configuring wisp..."
 mkdir -p /etc/wisp
+umask 077 # the config holds the password
 cat > /etc/wisp/server.yaml <<CFGEOF
 listen: ":443"
 tls:
