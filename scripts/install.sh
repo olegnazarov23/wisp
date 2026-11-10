@@ -8,6 +8,15 @@ DOMAIN=""
 PASSWORD=""
 COVER_SITE="blog"  # Options: blog, business
 
+# Random letters and digits, n of them.
+random_string() {
+    local out=""
+    while [ ${#out} -lt "$1" ]; do
+        out+=$(head -c 64 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
+    done
+    printf '%s' "${out:0:$1}"
+}
+
 # Percent-encodes a string for a URL.
 urlencode() {
     local s="$1" out="" c i
@@ -22,10 +31,11 @@ urlencode() {
 }
 
 usage() {
-    echo "Usage: $0 -d <domain> -p <password> [-s blog|business]"
+    echo "Usage: $0 -d <domain> [-p <password>] [-s blog|business]"
     echo ""
     echo "  -d    Your domain name (must already point to this server's IP)"
-    echo "  -p    Password clients authenticate with"
+    echo "  -p    Password clients authenticate with (default: a random one, printed at the end;"
+    echo "        better than one on the command line, which shell history keeps)"
     echo "  -s    Cover website style: blog (default) or business"
     exit 1
 }
@@ -39,9 +49,14 @@ while getopts "d:p:s:" opt; do
     esac
 done
 
-if [ -z "$DOMAIN" ] || [ -z "$PASSWORD" ]; then
+if [ -z "$DOMAIN" ]; then
     usage
 fi
+if [ -z "$PASSWORD" ]; then
+    PASSWORD=$(random_string 32)
+fi
+# The WebSocket path keeps probes out of the WebSocket and gRPC endpoints: one of its own
+WS_PATH="/api/$(random_string 20)"
 
 echo "=== Wisp server installation ==="
 echo "Domain: $DOMAIN"
@@ -55,7 +70,8 @@ apt-get install -y -qq caddy certbot > /dev/null
 
 # 2. Obtain TLS certificate.
 echo "[2/6] Obtaining TLS certificate..."
-certbot certonly --standalone --non-interactive --agree-tos \
+# --reuse-key keeps the key across renewals, and with it the pin clients check
+certbot certonly --standalone --non-interactive --agree-tos --reuse-key \
     --register-unsafely-without-email -d "$DOMAIN" || true
 
 # Check if cert exists.
@@ -199,6 +215,9 @@ passwords:
   - "$PASSWORD"
 fallback: "127.0.0.1:8080"
 fallback_h2: "127.0.0.1:8080"
+websocket:
+  enabled: true
+  path: "$WS_PATH"
 CFGEOF
 
 chmod 600 /etc/wisp/server.yaml
@@ -255,6 +274,8 @@ echo ""
 echo "WARNING: every server this script installs serves the same cover page, which makes them easy"
 echo "to find. Replace /var/www/cover with a site of your own."
 echo ""
+PIN=$(/usr/local/bin/wisp-server -config /etc/wisp/server.yaml -pin)
+
 echo "--- Client Configuration ---"
 echo ""
 echo "Desktop (client.yaml):"
@@ -264,6 +285,8 @@ echo "  sni: \"$DOMAIN\""
 echo "  listen: \"127.0.0.1:1080\""
 echo "  fingerprint: \"chrome\""
 echo "  transport: \"tls\""
+echo "  ws_path: \"$WS_PATH\"   # for transport ws or grpc"
+echo "  pins: [\"$PIN\"]"
 echo ""
 echo "iPhone (Shadowrocket):"
 echo "  Import URL: trojan://$(urlencode "$PASSWORD")@$DOMAIN:443#wisp"
