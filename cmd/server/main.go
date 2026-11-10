@@ -23,10 +23,13 @@ func main() {
 
 	log.Printf("starting server on %s", cfg.Listen)
 	log.Printf("fallback: %s", cfg.Fallback)
+	if cfg.FallbackH2 != "" {
+		log.Printf("fallback over HTTP/2: %s", cfg.FallbackH2)
+	}
 	log.Printf("users configured: %d", len(cfg.Users)+len(cfg.Passwords))
 
 	// Start TLS listener.
-	listener, err := tunnel.NewTLSListener(cfg.Listen, cfg.TLS.Cert, cfg.TLS.Key)
+	listener, err := tunnel.NewTLSListener(cfg.Listen, cfg.TLS.Cert, cfg.TLS.Key, cfg.FallbackH2 != "")
 	if err != nil {
 		log.Fatalf("tls listener: %v", err)
 	}
@@ -51,6 +54,7 @@ func main() {
 	handler := &Handler{
 		PasswordHashes: cfg.PasswordHashes,
 		FallbackAddr:   cfg.Fallback,
+		FallbackH2Addr: cfg.FallbackH2,
 		WSConfig:       cfg.WebSocket,
 		CoverSiteDir:   cfg.CoverSite,
 		EncryptionKey:  encKey,

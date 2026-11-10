@@ -16,6 +16,7 @@ type ServerConfig struct {
 	Passwords  []string          `yaml:"passwords"`
 	Users      []UserConfig      `yaml:"users"` // Named users (alternative to passwords list).
 	Fallback   string            `yaml:"fallback"`
+	FallbackH2 string            `yaml:"fallback_h2"` // The cover site over HTTP/2 without TLS (h2c); offers h2 to browsers.
 	WebSocket  *WSConfig         `yaml:"websocket"`
 	CoverSite  string            `yaml:"cover_site"` // Path to cover website files.
 	Encryption *EncryptionConfig `yaml:"encryption"`

@@ -42,8 +42,7 @@ func startAdmin() {
 			fmt.Fprintln(w, "No users connected yet.")
 			return
 		}
-		fmt.Fprintln(w, "User          Upload      Download    Conns       Last seen")
-		fmt.Fprintln(w, "----          ------      --------    -----       ---------")
+		fmt.Fprintln(w, stats.TextHeader())
 		for _, s := range snapshots {
 			fmt.Fprintln(w, s.String())
 		}

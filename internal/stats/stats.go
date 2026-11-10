@@ -24,6 +24,9 @@ type UserStats struct {
 	Limit       atomic.Int64 // bandwidth limit in bytes (0 = unlimited)
 	FirstSeen   time.Time
 	LastSeen    atomic.Value // time.Time
+
+	limiterMu sync.Mutex
+	limiter   *RateLimiter // shared by all the user's connections
 }
 
 // Global tracker instance.
@@ -76,6 +79,14 @@ type UserSnapshot struct {
 	LastSeen    time.Time `json:"last_seen"`
 }
 
+// textRow lays out a line of the text table: user, upload, download, quota, connections, last seen.
+const textRow = "%-12s  %-10s  %-10s  %-26s  %5v  %s"
+
+// TextHeader is the text table's header line.
+func TextHeader() string {
+	return fmt.Sprintf(textRow, "User", "Upload", "Download", "Quota", "Conns", "Last seen")
+}
+
 func (s UserSnapshot) String() string {
 	limitStr := "unlimited"
 	if s.Limit > 0 {
@@ -83,7 +94,7 @@ func (s UserSnapshot) String() string {
 		pct := float64(total) / float64(s.Limit) * 100
 		limitStr = fmt.Sprintf("%s / %s (%.0f%%)", formatBytes(total), formatBytes(s.Limit), pct)
 	}
-	return fmt.Sprintf("%-12s  up: %-10s  down: %-10s  quota: %-20s  conns: %d  last: %s",
+	return fmt.Sprintf(textRow,
 		s.Name,
 		formatBytes(s.Upload),
 		formatBytes(s.Download),

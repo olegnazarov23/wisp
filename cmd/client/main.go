@@ -22,7 +22,7 @@ func main() {
 	var encKey string
 	if cfg.Encryption != nil && cfg.Encryption.Enabled {
 		encKey = cfg.Encryption.Key
-		log.Printf("inner encryption: enabled (ChaCha20-Poly1305)")
+		log.Printf("inner encryption: enabled (XChaCha20-Poly1305)")
 	}
 
 	socks := &proxy.SOCKS5Server{

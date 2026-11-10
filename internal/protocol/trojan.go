@@ -12,6 +12,9 @@ const (
 	// Trojan command types.
 	CmdConnect      = 0x01
 	CmdUDPAssociate = 0x03
+	// CmdMux (trojan-go's value) opens a mux session: the rest of the connection is mux frames,
+	// each stream starting with its own Trojan request.
+	CmdMux = 0x7f
 
 	// Address types (same as SOCKS5).
 	AtypIPv4   = 0x01

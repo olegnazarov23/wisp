@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -119,6 +120,13 @@ func (s *SOCKS5Server) dialTransport() (net.Conn, error) {
 		return grpcConn, nil
 
 	default:
+		// Straight over TLS the server tells Trojan clients from the cover site's visitors by the
+		// password hash up front, so the session opens with a Trojan request of its own.
+		req := &protocol.Request{Cmd: protocol.CmdMux, ATyp: protocol.AtypIPv4, DstAddr: "0.0.0.0"}
+		if err := protocol.WriteRequest(tlsConn, s.PasswordHash, req, nil); err != nil {
+			tlsConn.Close()
+			return nil, fmt.Errorf("mux request: %w", err)
+		}
 		return tlsConn, nil
 	}
 }
@@ -129,7 +137,13 @@ func (s *SOCKS5Server) ListenAndServe(addr string) error {
 	if err != nil {
 		return fmt.Errorf("socks5 listen: %w", err)
 	}
+	return s.Serve(listener)
+}
+
+// Serve runs the SOCKS5 proxy on listener until it fails.
+func (s *SOCKS5Server) Serve(listener net.Listener) error {
 	defer listener.Close()
+	addr := listener.Addr().String()
 
 	log.Printf("SOCKS5 proxy listening on %s", addr)
 	log.Printf("transport: %s | mux: enabled | noise: %v", s.Transport, s.EnableNoise)
@@ -137,6 +151,9 @@ func (s *SOCKS5Server) ListenAndServe(addr string) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return err
+			}
 			log.Printf("socks5 accept: %v", err)
 			continue
 		}

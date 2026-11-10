@@ -24,6 +24,9 @@ import (
 type Handler struct {
 	PasswordHashes map[string]bool
 	FallbackAddr   string
+	// FallbackH2Addr serves the cover site over HTTP/2 without TLS (h2c), for browsers that
+	// negotiated h2; empty when the listener doesn't offer h2.
+	FallbackH2Addr string
 	WSConfig       *config.WSConfig
 	CoverSiteDir   string
 	EncryptionKey  string
@@ -42,6 +45,12 @@ func (h *Handler) Handle(conn net.Conn) {
 	firstBytes, err := br.Peek(3)
 	if err != nil {
 		h.fallback(br, conn)
+		return
+	}
+
+	// "PRI * HTTP/2.0": a browser that negotiated h2
+	if string(firstBytes) == "PRI" && h.FallbackH2Addr != "" {
+		h.fallbackTo(h.FallbackH2Addr, br, conn)
 		return
 	}
 
@@ -134,7 +143,8 @@ func (h *Handler) handleGRPCStream(br *bufio.Reader, conn net.Conn, req *http.Re
 	h.serveMux(tunnelConn, "grpc")
 }
 
-// handleRawTrojan handles direct Trojan (non-HTTP) connections with mux.
+// handleRawTrojan handles Trojan straight over TLS: one proxied connection per TLS connection
+// (Shadowrocket, v2rayNG and other Trojan clients), or a mux session (the wisp client).
 func (h *Handler) handleRawTrojan(br *bufio.Reader, conn net.Conn) {
 	hashBytes, err := br.Peek(protocol.HashLen)
 	if err != nil {
@@ -152,66 +162,33 @@ func (h *Handler) handleRawTrojan(br *bufio.Reader, conn net.Conn) {
 		return
 	}
 
-	// Auth OK for raw mode — but raw mode uses legacy single-request path
-	// (for Shadowrocket/iOS compatibility, which doesn't support mux).
-	br.Discard(protocol.HashLen)
+	// Authenticated: read the rest of the header, still within the read deadline.
+	hash, req, err := protocol.ReadRequest(br)
+	if err != nil {
+		return
+	}
 	conn.SetReadDeadline(time.Time{})
 
-	crlf := make([]byte, 2)
-	if _, err = io.ReadFull(br, crlf); err != nil {
-		return
-	}
-
-	cmdAtyp := make([]byte, 2)
-	if _, err = io.ReadFull(br, cmdAtyp); err != nil {
-		return
-	}
-
-	req := &protocol.Request{Cmd: cmdAtyp[0], ATyp: cmdAtyp[1]}
-
-	switch req.ATyp {
-	case protocol.AtypIPv4:
-		addr := make([]byte, 4)
-		if _, err = io.ReadFull(br, addr); err != nil {
+	buffConn := &bufferedReadConn{Reader: br, Conn: conn}
+	if req.Cmd == protocol.CmdMux {
+		tunnelConn, err := h.wrapEncryption(buffConn)
+		if err != nil {
+			log.Printf("tls encryption: %v", err)
 			return
 		}
-		req.DstAddr = net.IP(addr).String()
-	case protocol.AtypDomain:
-		lenBuf := make([]byte, 1)
-		if _, err = io.ReadFull(br, lenBuf); err != nil {
-			return
-		}
-		domain := make([]byte, lenBuf[0])
-		if _, err = io.ReadFull(br, domain); err != nil {
-			return
-		}
-		req.DstAddr = string(domain)
-	case protocol.AtypIPv6:
-		addr := make([]byte, 16)
-		if _, err = io.ReadFull(br, addr); err != nil {
-			return
-		}
-		req.DstAddr = net.IP(addr).String()
-	default:
+		h.serveMux(tunnelConn, "tls")
 		return
 	}
 
-	portBuf := make([]byte, 2)
-	if _, err = io.ReadFull(br, portBuf); err != nil {
-		return
-	}
-	req.DstPort = uint16(portBuf[0])<<8 | uint16(portBuf[1])
-
-	if _, err = io.ReadFull(br, crlf); err != nil {
-		return
-	}
-
-	user := h.UserNames[string(hashBytes)]
+	user := h.UserNames[hash]
 	if user == "" {
 		user = "anonymous"
 	}
+	if stats.Global.IsOverLimit(user) {
+		log.Printf("[%s] over bandwidth limit, rejecting", user)
+		return
+	}
 
-	buffConn := &bufferedReadConn{Reader: br, Conn: conn}
 	speed := h.UserSpeeds[user]
 	wrapped := stats.WrapThrottled(buffConn, user, speed)
 	defer wrapped.Close()
@@ -377,7 +354,12 @@ func (h *Handler) authenticate(receivedHash string) bool {
 
 // fallback forwards the connection to the fallback web server.
 func (h *Handler) fallback(br *bufio.Reader, clientConn net.Conn) {
-	fallbackConn, err := net.DialTimeout("tcp", h.FallbackAddr, 5*time.Second)
+	h.fallbackTo(h.FallbackAddr, br, clientConn)
+}
+
+// fallbackTo forwards the connection to addr, starting with the bytes already read.
+func (h *Handler) fallbackTo(addr string, br *bufio.Reader, clientConn net.Conn) {
+	fallbackConn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return
 	}

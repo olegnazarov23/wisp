@@ -13,14 +13,25 @@ type ThrottledConn struct {
 	limiter *RateLimiter
 }
 
-// WrapThrottled wraps a connection with both byte counting and speed limiting.
+// WrapThrottled wraps a connection with both byte counting and speed limiting. The limit is the
+// user's: all their connections share it.
 func WrapThrottled(conn net.Conn, username string, bytesPerSec int64) *ThrottledConn {
 	counted := WrapConn(conn, username)
 	var limiter *RateLimiter
 	if bytesPerSec > 0 {
-		limiter = NewRateLimiter(bytesPerSec)
+		limiter = counted.stats.rateLimiter(bytesPerSec)
 	}
 	return &ThrottledConn{Conn: counted, limiter: limiter}
+}
+
+// rateLimiter returns the user's limiter, made on first use.
+func (s *UserStats) rateLimiter(bytesPerSec int64) *RateLimiter {
+	s.limiterMu.Lock()
+	defer s.limiterMu.Unlock()
+	if s.limiter == nil {
+		s.limiter = NewRateLimiter(bytesPerSec)
+	}
+	return s.limiter
 }
 
 func (c *ThrottledConn) Read(b []byte) (int, error) {

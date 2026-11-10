@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"time"
@@ -9,11 +10,16 @@ import (
 	utls "github.com/refraction-networking/utls"
 )
 
-// NewTLSListener creates a TLS 1.3 listener using real certificates.
+// RootCAs are the CAs the client trusts for the server's certificate: nil means the system's.
+// Tests set their own.
+var RootCAs *x509.CertPool
+
+// NewTLSListener creates a TLS listener using real certificates.
 // The server-side TLS config is tuned to look like a standard web server:
-// - Supports TLS 1.2+ (not just 1.3) because restricting to 1.3-only is a fingerprint
-// - ALPN advertises h2 and http/1.1 like a real web server
-func NewTLSListener(addr, certFile, keyFile string) (net.Listener, error) {
+//   - Supports TLS 1.2+ (not just 1.3) because restricting to 1.3-only is a fingerprint
+//   - ALPN offers h2 only with h2 true, when the cover site can answer HTTP/2: a browser that
+//     negotiated h2 and got an HTTP/1.1 reply would show an error, to visitors and probes alike
+func NewTLSListener(addr, certFile, keyFile string, h2 bool) (net.Listener, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load certificate: %w", err)
@@ -21,8 +27,11 @@ func NewTLSListener(addr, certFile, keyFile string) (net.Listener, error) {
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,           // Accept TLS 1.2 too — TLS 1.3-only is suspicious.
-		NextProtos:   []string{"h2", "http/1.1"}, // ALPN like a real web server.
+		MinVersion:   tls.VersionTLS12, // Accept TLS 1.2 too — TLS 1.3-only is suspicious.
+		NextProtos:   []string{"http/1.1"},
+	}
+	if h2 {
+		tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 	}
 
 	listener, err := tls.Listen("tcp", addr, tlsConfig)
@@ -52,6 +61,7 @@ func DialTLS(addr, sni, fingerprint string) (net.Conn, error) {
 
 	tlsConfig := &utls.Config{
 		ServerName: sni,
+		RootCAs:    RootCAs,
 		// Do NOT set MinVersion to TLS 1.3 — let uTLS handle it.
 		// Real browsers advertise TLS 1.2 in ClientHello but negotiate 1.3.
 		// Setting MinVersion here would alter the ClientHello fingerprint.
@@ -80,6 +90,7 @@ func DialTLSWithDialer(dialer *net.Dialer, addr, sni, fingerprint string) (net.C
 
 	tlsConfig := &utls.Config{
 		ServerName: sni,
+		RootCAs:    RootCAs,
 		NextProtos: []string{"h2", "http/1.1"},
 	}
 
