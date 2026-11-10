@@ -302,5 +302,5 @@ func (st *Stream) RemoteAddr() net.Addr {
 
 // SetDeadline is a no-op (deadlines managed per-stream via context if needed).
 func (st *Stream) SetDeadline(t time.Time) error      { return nil }
-func (st *Stream) SetReadDeadline(t time.Time) error   { return nil }
-func (st *Stream) SetWriteDeadline(t time.Time) error  { return nil }
+func (st *Stream) SetReadDeadline(t time.Time) error  { return nil }
+func (st *Stream) SetWriteDeadline(t time.Time) error { return nil }

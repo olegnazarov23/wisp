@@ -43,7 +43,7 @@ type RateLimiter struct {
 	mu         sync.Mutex
 	tokens     float64
 	maxTokens  float64
-	refillRate float64   // tokens per nanosecond
+	refillRate float64 // tokens per nanosecond
 	lastRefill time.Time
 }
 

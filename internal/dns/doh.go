@@ -19,8 +19,8 @@ type DoHResolver struct {
 
 // Common DoH providers (not blocked in most countries).
 const (
-	GoogleDoH = "https://dns.google/dns-query"
-	Quad9DoH  = "https://dns.quad9.net:5053/dns-query"
+	GoogleDoH  = "https://dns.google/dns-query"
+	Quad9DoH   = "https://dns.quad9.net:5053/dns-query"
 	AdGuardDoH = "https://dns.adguard-dns.com/dns-query"
 )
 
@@ -87,7 +87,7 @@ func buildDNSQuery(name string, qtype uint16) []byte {
 
 	// QTYPE and QCLASS.
 	buf = append(buf, byte(qtype>>8), byte(qtype)) // Type A or AAAA
-	buf = append(buf, 0x00, 0x01)                   // Class IN
+	buf = append(buf, 0x00, 0x01)                  // Class IN
 
 	return buf
 }

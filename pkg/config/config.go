@@ -11,13 +11,13 @@ import (
 
 // ServerConfig holds the server-side configuration.
 type ServerConfig struct {
-	Listen     string          `yaml:"listen"`
-	TLS        TLSConfig       `yaml:"tls"`
-	Passwords  []string        `yaml:"passwords"`
-	Users      []UserConfig    `yaml:"users"` // Named users (alternative to passwords list).
-	Fallback   string          `yaml:"fallback"`
-	WebSocket  *WSConfig       `yaml:"websocket"`
-	CoverSite  string          `yaml:"cover_site"` // Path to cover website files.
+	Listen     string            `yaml:"listen"`
+	TLS        TLSConfig         `yaml:"tls"`
+	Passwords  []string          `yaml:"passwords"`
+	Users      []UserConfig      `yaml:"users"` // Named users (alternative to passwords list).
+	Fallback   string            `yaml:"fallback"`
+	WebSocket  *WSConfig         `yaml:"websocket"`
+	CoverSite  string            `yaml:"cover_site"` // Path to cover website files.
 	Encryption *EncryptionConfig `yaml:"encryption"`
 
 	// Pre-computed password hashes (not from YAML).
@@ -55,11 +55,11 @@ type TLSConfig struct {
 
 // ClientConfig holds the client-side configuration.
 type ClientConfig struct {
-	Server      string `yaml:"server"`
-	Password    string `yaml:"password"`
-	SNI         string `yaml:"sni"`
-	Listen      string `yaml:"listen"`
-	Fingerprint string `yaml:"fingerprint"`
+	Server      string            `yaml:"server"`
+	Password    string            `yaml:"password"`
+	SNI         string            `yaml:"sni"`
+	Listen      string            `yaml:"listen"`
+	Fingerprint string            `yaml:"fingerprint"`
 	Transport   string            `yaml:"transport"` // "tls", "ws" (WebSocket), or "grpc" (HTTP/2-style).
 	WSPath      string            `yaml:"ws_path"`   // WebSocket/gRPC path (must match server).
 	Encryption  *EncryptionConfig `yaml:"encryption"`

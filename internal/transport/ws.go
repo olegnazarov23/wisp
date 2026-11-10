@@ -28,8 +28,7 @@ const wsGUID = "258EAFA5-E914-47DA-95CA-5AB5E44683DC"
 type WSConn struct {
 	net.Conn
 	br     *bufio.Reader
-	isRead bool // tracks if we have a partial frame being read
-	remain int  // remaining bytes in current frame
+	remain int // remaining bytes in current frame
 }
 
 // NewWSConn wraps an existing connection with WebSocket framing.

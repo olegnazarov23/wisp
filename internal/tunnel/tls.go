@@ -21,7 +21,7 @@ func NewTLSListener(addr, certFile, keyFile string) (net.Listener, error) {
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12, // Accept TLS 1.2 too — TLS 1.3-only is suspicious.
+		MinVersion:   tls.VersionTLS12,           // Accept TLS 1.2 too — TLS 1.3-only is suspicious.
 		NextProtos:   []string{"h2", "http/1.1"}, // ALPN like a real web server.
 	}
 

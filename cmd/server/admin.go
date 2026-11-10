@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/awisp/wisp/internal/stats"
+	"github.com/olegnazarov23/wisp/internal/stats"
 )
 
 const adminSocket = "/run/wisp-admin.sock"

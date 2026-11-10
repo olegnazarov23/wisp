@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	vpncrypto "github.com/awisp/wisp/internal/crypto"
-	"github.com/awisp/wisp/internal/mux"
-	"github.com/awisp/wisp/internal/protocol"
-	"github.com/awisp/wisp/internal/proxy"
-	"github.com/awisp/wisp/internal/stats"
-	"github.com/awisp/wisp/internal/transport"
-	"github.com/awisp/wisp/pkg/config"
+	vpncrypto "github.com/olegnazarov23/wisp/internal/crypto"
+	"github.com/olegnazarov23/wisp/internal/mux"
+	"github.com/olegnazarov23/wisp/internal/protocol"
+	"github.com/olegnazarov23/wisp/internal/proxy"
+	"github.com/olegnazarov23/wisp/internal/stats"
+	"github.com/olegnazarov23/wisp/internal/transport"
+	"github.com/olegnazarov23/wisp/pkg/config"
 )
 
 // Handler processes incoming connections.

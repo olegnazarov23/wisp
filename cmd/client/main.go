@@ -4,8 +4,8 @@ import (
 	"flag"
 	"log"
 
-	"github.com/awisp/wisp/internal/proxy"
-	"github.com/awisp/wisp/pkg/config"
+	"github.com/olegnazarov23/wisp/internal/proxy"
+	"github.com/olegnazarov23/wisp/pkg/config"
 )
 
 func main() {

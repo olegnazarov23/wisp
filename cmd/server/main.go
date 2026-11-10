@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/awisp/wisp/internal/stats"
-	"github.com/awisp/wisp/internal/tunnel"
-	"github.com/awisp/wisp/pkg/config"
+	"github.com/olegnazarov23/wisp/internal/stats"
+	"github.com/olegnazarov23/wisp/internal/tunnel"
+	"github.com/olegnazarov23/wisp/pkg/config"
 )
 
 func main() {

@@ -8,12 +8,12 @@ import (
 	"net"
 	"sync"
 
-	vpncrypto "github.com/awisp/wisp/internal/crypto"
-	"github.com/awisp/wisp/internal/camouflage"
-	"github.com/awisp/wisp/internal/mux"
-	"github.com/awisp/wisp/internal/protocol"
-	"github.com/awisp/wisp/internal/transport"
-	"github.com/awisp/wisp/internal/tunnel"
+	"github.com/olegnazarov23/wisp/internal/camouflage"
+	vpncrypto "github.com/olegnazarov23/wisp/internal/crypto"
+	"github.com/olegnazarov23/wisp/internal/mux"
+	"github.com/olegnazarov23/wisp/internal/protocol"
+	"github.com/olegnazarov23/wisp/internal/transport"
+	"github.com/olegnazarov23/wisp/internal/tunnel"
 )
 
 // SOCKS5 constants.
