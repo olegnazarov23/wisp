@@ -14,10 +14,18 @@ import (
 
 // WebSocket opcodes.
 const (
-	opBinary = 2
-	opClose  = 8
-	opPing   = 9
-	opPong   = 10
+	opContinuation = 0
+	opBinary       = 2
+	opClose        = 8
+	opPing         = 9
+	opPong         = 10
+)
+
+// maxFrameLen bounds a data frame: wisp's own are under 40 KB. Control frames carry at most 125
+// bytes (RFC 6455 §5.5).
+const (
+	maxFrameLen   = 1 << 20
+	maxControlLen = 125
 )
 
 // wsGUID is the magic GUID from RFC 6455.
@@ -27,8 +35,11 @@ const wsGUID = "258EAFA5-E914-47DA-95CA-5AB5E44683DC"
 // Implements net.Conn so it can be used transparently by the Trojan protocol layer.
 type WSConn struct {
 	net.Conn
-	br     *bufio.Reader
-	remain int // remaining bytes in current frame
+	br      *bufio.Reader
+	remain  int    // remaining bytes in current frame
+	mask    []byte // the current frame's masking key, nil if unmasked
+	maskPos int    // offset into the current frame, for unmasking
+	client  bool   // the client side masks its frames (RFC 6455 §5.1)
 }
 
 // NewWSConn wraps an existing connection with WebSocket framing.
@@ -49,6 +60,12 @@ func (c *WSConn) Read(b []byte) (int, error) {
 				n = c.remain
 			}
 			n, err := c.br.Read(b[:n])
+			if c.mask != nil {
+				for i := range n {
+					b[i] ^= c.mask[(c.maskPos+i)%4]
+				}
+			}
+			c.maskPos += n
 			c.remain -= n
 			return n, err
 		}
@@ -60,12 +77,8 @@ func (c *WSConn) Read(b []byte) (int, error) {
 		}
 
 		switch op {
-		case opBinary:
-			if mask != nil {
-				// Masked frame (from client): read, unmask, return.
-				return c.readMasked(b, length, mask)
-			}
-			c.remain = length
+		case opBinary, opContinuation:
+			c.remain, c.mask, c.maskPos = length, mask, 0
 			continue
 
 		case opPing:
@@ -132,6 +145,10 @@ func (c *WSConn) readFrameHeader() (op byte, length int, mask []byte, err error)
 			int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
 	}
 
+	if length < 0 || length > maxFrameLen || (op >= opClose && length > maxControlLen) {
+		return 0, 0, nil, fmt.Errorf("websocket frame of %d bytes", length)
+	}
+
 	// Masking key (4 bytes if masked).
 	if masked {
 		mask = make([]byte, 4)
@@ -143,40 +160,41 @@ func (c *WSConn) readFrameHeader() (op byte, length int, mask []byte, err error)
 	return op, length, mask, nil
 }
 
-func (c *WSConn) readMasked(b []byte, length int, mask []byte) (int, error) {
-	n := len(b)
-	if n > length {
-		n = length
-	}
-	n, err := io.ReadFull(c.br, b[:n])
-	if err != nil {
-		return n, err
-	}
-	unmask(b[:n], mask)
-	c.remain = length - n
-	return n, nil
-}
-
 func (c *WSConn) writeFrame(op byte, payload []byte) error {
 	// Build frame header.
 	var hdr []byte
 	plen := len(payload)
 
+	var maskBit byte
+	if c.client {
+		maskBit = 0x80
+	}
 	if plen < 126 {
-		hdr = []byte{0x80 | op, byte(plen)}
+		hdr = []byte{0x80 | op, maskBit | byte(plen)}
 	} else if plen < 65536 {
-		hdr = []byte{0x80 | op, 126, byte(plen >> 8), byte(plen)}
+		hdr = []byte{0x80 | op, maskBit | 126, byte(plen >> 8), byte(plen)}
 	} else {
-		hdr = []byte{0x80 | op, 127,
+		hdr = []byte{0x80 | op, maskBit | 127,
 			byte(plen >> 56), byte(plen >> 48), byte(plen >> 40), byte(plen >> 32),
 			byte(plen >> 24), byte(plen >> 16), byte(plen >> 8), byte(plen),
 		}
 	}
 
 	// Write header + payload in one write to avoid fragmentation.
-	buf := make([]byte, 0, len(hdr)+plen)
+	buf := make([]byte, 0, len(hdr)+4+plen)
 	buf = append(buf, hdr...)
-	buf = append(buf, payload...)
+	if c.client {
+		key := make([]byte, 4)
+		if _, err := rand.Read(key); err != nil {
+			return err
+		}
+		buf = append(buf, key...)
+		start := len(buf)
+		buf = append(buf, payload...)
+		unmask(buf[start:], key)
+	} else {
+		buf = append(buf, payload...)
+	}
 	_, err := c.Conn.Write(buf)
 	return err
 }
@@ -230,8 +248,9 @@ func ClientUpgrade(conn net.Conn, host, path string) (*WSConn, error) {
 	}
 
 	wsConn := &WSConn{
-		Conn: conn,
-		br:   br,
+		Conn:   conn,
+		br:     br,
+		client: true,
 	}
 	return wsConn, nil
 }
