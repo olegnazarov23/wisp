@@ -48,9 +48,13 @@ censors see an ordinary site.
 
 ## Quick start
 
-### 1. Build
+### 1. Get the binaries
 
-Requires Go 1.27 or newer.
+Download them from [Releases](https://github.com/olegnazarov23/wisp/releases), and check one
+before you run it: `gh attestation verify wisp-server-linux-amd64 -R olegnazarov23/wisp` shows it
+was built from this repository by its release workflow, and `SHA256SUMS` has the checksums.
+
+Or build them; this needs Go 1.27 or newer:
 
 ```bash
 # Server (Linux)

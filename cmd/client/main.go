@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"time"
 
@@ -9,9 +10,18 @@ import (
 	"github.com/olegnazarov23/wisp/pkg/config"
 )
 
+// version is set in release builds: -ldflags "-X main.version=v0.2.0".
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "configs/client.yaml", "path to client config")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("wisp-client", version)
+		return
+	}
+	log.Printf("wisp-client %s", version)
 
 	cfg, err := config.LoadClientConfig(*configPath)
 	if err != nil {

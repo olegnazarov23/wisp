@@ -16,10 +16,18 @@ import (
 	"github.com/olegnazarov23/wisp/pkg/config"
 )
 
+// version is set in release builds: -ldflags "-X main.version=v0.2.0".
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "configs/server.yaml", "path to server config")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	printPin := flag.Bool("pin", false, "print the pin of the configured certificate's key, for clients' pins, and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("wisp-server", version)
+		return
+	}
 
 	cfg, err := config.LoadServerConfig(*configPath)
 	if err != nil {
@@ -39,7 +47,7 @@ func main() {
 		return
 	}
 
-	log.Printf("starting server on %s", cfg.Listen)
+	log.Printf("wisp-server %s starting on %s", version, cfg.Listen)
 	log.Printf("fallback: %s", cfg.Fallback)
 	if cfg.FallbackH2 != "" {
 		log.Printf("fallback over HTTP/2: %s", cfg.FallbackH2)

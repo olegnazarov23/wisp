@@ -1,0 +1,46 @@
+name: release
+
+# On a v* tag: test, build the server and client binaries, attest where they were built, and
+# publish them with their checksums as a GitHub release whose notes are the tag's message.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write     # the release
+  id-token: write     # the provenance attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+      - name: build
+        run: |
+          mkdir dist
+          build() {
+            CGO_ENABLED=0 GOOS=$1 GOARCH=$2 go build -trimpath \
+              -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" -o "dist/$3" "./cmd/$4"
+          }
+          build linux amd64 wisp-server-linux-amd64 server
+          build linux arm64 wisp-server-linux-arm64 server
+          build linux amd64 wisp-client-linux-amd64 client
+          build darwin amd64 wisp-client-darwin-amd64 client
+          build darwin arm64 wisp-client-darwin-arm64 client
+          build windows amd64 wisp-client-windows-amd64.exe client
+          cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md
