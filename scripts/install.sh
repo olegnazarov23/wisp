@@ -1,35 +1,35 @@
 #!/bin/bash
 set -euo pipefail
 
-# VPN Server Installation Script
-# Run on a fresh Ubuntu/Debian server as root.
+# Wisp server installation: run as root on a fresh Debian or Ubuntu server, from a checkout with
+# wisp-server built next to this directory (see the README).
 
 DOMAIN=""
 PASSWORD=""
 COVER_SITE="blog"  # Options: blog, business
 
+# Percent-encodes a string for a URL.
+urlencode() {
+    local s="$1" out="" c i
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        case "$c" in
+            [a-zA-Z0-9.~_-]) out+="$c" ;;
+            *) out+=$(printf '%%%02X' "'$c") ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
 usage() {
     echo "Usage: $0 -d <domain> -p <password> [-s blog|business]"
     echo ""
     echo "  -d    Your domain name (must already point to this server's IP)"
-    echo "  -p    VPN password (will be used for client authentication)"
+    echo "  -p    Password clients authenticate with"
     echo "  -s    Cover website style: blog (default) or business"
     exit 1
 }
 
-while getopts "d:p:s:" opt; do
-    case $opt in
-        d) DOMAIN="$opt" ;;
-        p) PASSWORD="$OPTARG" ;;
-        s) COVER_SITE="$OPTARG" ;;
-        *) usage ;;
-    esac
-done
-
-# Fix: getopts with -d needs OPTARG
-DOMAIN=""
-PASSWORD=""
-COVER_SITE="blog"
 while getopts "d:p:s:" opt; do
     case $opt in
         d) DOMAIN="$OPTARG" ;;
@@ -43,7 +43,7 @@ if [ -z "$DOMAIN" ] || [ -z "$PASSWORD" ]; then
     usage
 fi
 
-echo "=== VPN Server Installation ==="
+echo "=== Wisp server installation ==="
 echo "Domain: $DOMAIN"
 echo "Cover site: $COVER_SITE"
 echo ""
@@ -56,8 +56,7 @@ apt-get install -y -qq caddy certbot > /dev/null
 # 2. Obtain TLS certificate.
 echo "[2/6] Obtaining TLS certificate..."
 certbot certonly --standalone --non-interactive --agree-tos \
-    --register-unsolicited -d "$DOMAIN" \
-    --email "admin@$DOMAIN" || true
+    --register-unsafely-without-email -d "$DOMAIN" || true
 
 # Check if cert exists.
 CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
@@ -161,6 +160,13 @@ echo -n "" > "$WEBROOT/favicon.ico"
 # 4. Configure Caddy as fallback web server.
 echo "[4/6] Configuring Caddy..."
 cat > /etc/caddy/Caddyfile <<CADDYEOF
+{
+    servers {
+        # HTTP/2 without TLS too, for browsers that negotiate h2 with wisp
+        protocols h1 h2c
+    }
+}
+
 :8080 {
     root * /var/www/cover
     file_server
@@ -178,10 +184,10 @@ CADDYEOF
 systemctl restart caddy
 systemctl enable caddy
 
-# 5. Create VPN server config and install binary.
-echo "[5/6] Configuring VPN server..."
-mkdir -p /etc/vpn
-cat > /etc/vpn/server.yaml <<CFGEOF
+# 5. Create the server config and install the binary.
+echo "[5/6] Configuring wisp..."
+mkdir -p /etc/wisp
+cat > /etc/wisp/server.yaml <<CFGEOF
 listen: ":443"
 tls:
   cert: "$CERT_DIR/fullchain.pem"
@@ -189,32 +195,34 @@ tls:
 passwords:
   - "$PASSWORD"
 fallback: "127.0.0.1:8080"
+fallback_h2: "127.0.0.1:8080"
 CFGEOF
 
-chmod 600 /etc/vpn/server.yaml
+chmod 600 /etc/wisp/server.yaml
 
 # Copy the server binary (assumes it was built and placed alongside this script).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$SCRIPT_DIR/../vpn-server" ]; then
-    cp "$SCRIPT_DIR/../vpn-server" /usr/local/bin/vpn-server
-    chmod +x /usr/local/bin/vpn-server
+if [ -f "$SCRIPT_DIR/../wisp-server" ]; then
+    cp "$SCRIPT_DIR/../wisp-server" /usr/local/bin/wisp-server
+    chmod +x /usr/local/bin/wisp-server
 else
-    echo "WARNING: vpn-server binary not found. Build it with:"
-    echo "  GOOS=linux GOARCH=amd64 go build -o vpn-server ./cmd/server"
+    echo "ERROR: wisp-server not found next to scripts/. Build it with:"
+    echo "  GOOS=linux GOARCH=amd64 go build -o wisp-server ./cmd/server"
+    exit 1
 fi
 
 # 6. Create systemd service.
 echo "[6/6] Creating systemd service..."
-cat > /etc/systemd/system/vpn-server.service <<'SVCEOF'
+cat > /etc/systemd/system/wisp.service <<'SVCEOF'
 [Unit]
-Description=VPN Server
+Description=Wisp server
 After=network.target caddy.service
 Wants=caddy.service
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/vpn-server -config /etc/vpn/server.yaml
+ExecStart=/usr/local/bin/wisp-server -config /etc/wisp/server.yaml
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -223,7 +231,8 @@ LimitNOFILE=65535
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/vpn
+# the admin socket, /run/wisp-admin.sock
+ReadWritePaths=/run
 PrivateTmp=true
 
 [Install]
@@ -231,8 +240,8 @@ WantedBy=multi-user.target
 SVCEOF
 
 systemctl daemon-reload
-systemctl enable vpn-server
-systemctl start vpn-server
+systemctl enable wisp
+systemctl start wisp
 
 echo ""
 echo "=== Installation Complete ==="
@@ -240,16 +249,20 @@ echo ""
 echo "Server is running on port 443."
 echo "Cover website is live at https://$DOMAIN"
 echo ""
+echo "WARNING: every server this script installs serves the same cover page, which makes them easy"
+echo "to find. Replace /var/www/cover with a site of your own."
+echo ""
 echo "--- Client Configuration ---"
 echo ""
-echo "Desktop (configs/client.yaml):"
+echo "Desktop (client.yaml):"
 echo "  server: \"$DOMAIN:443\""
 echo "  password: \"$PASSWORD\""
 echo "  sni: \"$DOMAIN\""
 echo "  listen: \"127.0.0.1:1080\""
 echo "  fingerprint: \"chrome\""
+echo "  transport: \"tls\""
 echo ""
 echo "iPhone (Shadowrocket):"
-echo "  Import URL: trojan://$PASSWORD@$DOMAIN:443#VPN"
+echo "  Import URL: trojan://$(urlencode "$PASSWORD")@$DOMAIN:443#wisp"
 echo "  Or manually: Type=Trojan, Address=$DOMAIN, Port=443, Password=$PASSWORD"
 echo ""
