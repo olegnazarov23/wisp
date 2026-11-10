@@ -38,3 +38,6 @@ encryption:
 # Users can't reach loopback, private or link-local addresses through the server (its own
 # services, its LAN, cloud metadata) unless this is true.
 # allow_private: false
+
+# Log failed destinations (default false: logs never say where users go).
+# debug: false

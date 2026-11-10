@@ -23,3 +23,13 @@ ws_path: "/api/v1/stream"
 encryption:
   enabled: true
   key: "same-key-as-server"
+
+# The server's key: with pins, the client connects only if the certificate carries one, so TLS
+# interception fails. Get it with: wisp-server -config /etc/wisp/server.yaml -pin
+# pins: ["sha256/..."]
+
+# Replace the connection every 10 to 20 minutes or 128 to 256 MB (default true).
+# rotate: true
+
+# Small random messages every 2 to 8 seconds (default false).
+# noise: false

@@ -33,13 +33,14 @@ censors see an ordinary site.
   Chrome's, Firefox's or Safari's, via [uTLS](https://github.com/refraction-networking/utls).
 - **Resists active probing.** Anyone who doesn't authenticate gets your website.
 - **Three transports.** Trojan straight over TLS, WebSocket, or an HTTP stream that looks like gRPC.
+- **Key pinning.** The client can insist on your server's key, so TLS interception, even with a
+  CA the device trusts (for example a government-issued one), fails instead of reading the tunnel.
 - **Inner encryption (optional).** XChaCha20-Poly1305 inside TLS, with a key you share between
-  server and clients, so content stays private even if TLS is intercepted, for example with a
-  government-issued CA.
+  server and clients, so content stays private even if TLS is intercepted.
 - **Multiplexing.** The desktop client carries all its connections over one TLS connection, like
-  a browser.
-- **Noise.** The client sends a small random message every 2 to 8 seconds, so an idle tunnel
-  isn't silent.
+  a browser, and replaces it every 10 to 20 minutes or 128 to 256 MB, with at most two open.
+- **Noise (optional).** The client can send a small random message every 2 to 8 seconds, so an
+  idle tunnel isn't silent.
 - **Multiple users.** Named users, each with an optional speed limit and data quota.
 - **Phones.** Shadowrocket, v2rayNG and other Trojan clients connect too.
 - **Stats.** Per-user traffic over a local Unix socket.
@@ -69,8 +70,11 @@ the certificate, a cover site behind Caddy, the config and a systemd service. Ru
 checkout, with `wisp-server` built in the checkout's top directory:
 
 ```bash
-sudo ./scripts/install.sh -d yourdomain.com -p 'a-long-random-password'
+sudo ./scripts/install.sh -d yourdomain.com
 ```
+
+It makes up a long random password and WebSocket path, and prints the client config, with the
+pin of the server's key.
 
 Or by hand:
 
@@ -138,6 +142,7 @@ encryption:
   key: "shared-secret-key"  # A long random string, the same on every client
 
 allow_private: false        # true lets users reach the server's own network (optional)
+debug: false                # true logs failed destinations; otherwise logs never name them
 ```
 
 Instead of `users`, a plain `passwords:` list works too; its traffic shows up as "anonymous".
@@ -163,7 +168,16 @@ ws_path: "/api/v1/stream"   # The server's websocket path, for ws and grpc
 encryption:
   enabled: true
   key: "shared-secret-key"
+
+pins: ["sha256/…"]          # The server's key: wisp-server -config server.yaml -pin
+rotate: true                # Replace the connection every 10 to 20 minutes (the default)
+noise: false                # Small random messages every few seconds (off by default)
 ```
+
+With `pins`, the client connects only if the server's certificate carries a pinned key. Get the
+pin with `wisp-server -config /etc/wisp/server.yaml -pin`, and renew with `certbot --reuse-key`
+(as `scripts/install.sh` does) so renewals keep the key and the pin. List a second pin before
+moving to a new key.
 
 ### Transports
 
@@ -222,9 +236,11 @@ The same as JSON at `/stats`.
 | uTLS browser handshake | TLS ClientHello fingerprinting (e.g. Russia's TSPU) |
 | Cover site for anyone who doesn't authenticate | Active probing |
 | WebSocket and gRPC-style transports | Networks and CDNs that only pass web traffic |
-| Inner encryption | Reading traffic through intercepted TLS (government CAs) |
-| Multiplexing | Patterns in how many connections a client opens |
-| Noise | Telling an idle tunnel from a busy one |
+| Key pinning | TLS interception with a CA the device trusts (government CAs) |
+| Inner encryption | Reading traffic through intercepted TLS |
+| Multiplexing, each frame sent in one piece | Patterns in how many connections a client opens; small fixed-size records |
+| Replacing the connection every 10 to 20 minutes | One connection carrying hours and gigabytes, which browsers don't |
+| Noise (optional) | Telling an idle tunnel from a busy one |
 | HTTP/2 offered only with an HTTP/2 cover site | Probes that try HTTP/2 |
 
 ## Limits
@@ -238,9 +254,12 @@ The same as JSON at `/stats`.
 - **Inner encryption** keeps content private from someone who intercepts TLS, but they can still
   tell it isn't a normal website. All users share one key, there's no forward secrecy, and frames
   aren't numbered, so an interceptor can replay or reorder them. The key is one SHA-256 of the
-  configured string: make it long and random.
-- **Noise** goes out every 2 to 8 seconds, all day, from client to server only. A browser doesn't
-  do that, so it can stand out as much as it hides.
+  configured string: make it long and random. Against interception, `pins` is the stronger
+  defense: the connection fails instead.
+- **Noise**, when on, goes out every 2 to 8 seconds, all day, from client to server only. A
+  browser doesn't do that, so it can stand out as much as it hides; it's off by default.
+- **Phone apps** open a TLS connection for every connection they proxy, and some censors freeze
+  a server that gets several handshakes in a fraction of a second. The desktop client doesn't.
 - **Quotas** are counted in memory and checked when a connection opens: they start over when the
   server restarts.
 - **Browser fingerprints** come from uTLS and are only as current as the uTLS version wisp was
@@ -248,9 +267,14 @@ The same as JSON at `/stats`.
 
 ## Deployment tips
 
-- **Domain**: Use a normal-looking domain (`.com`, `.io`, `.agency`). Register it through a
-  registrar outside your country.
-- **VPS**: Hetzner, Oracle Cloud, or any provider whose IPs aren't mass-blocked in your region.
+- **Domain**: Use a normal-looking domain (`.com`, `.io`, `.agency`), with nothing like "vpn" or
+  "proxy" in it. Register it through a registrar outside your country.
+- **VPS**: Pick a provider whose IPs aren't mass-blocked in your region, and test from there before
+  you hand the server out. In Russia in 2026, the big hosters' ranges (Hetzner, DigitalOcean,
+  OVH, Vultr) get extra scrutiny, and connections to some stall after about 16 KB; smaller
+  providers with clean address ranges fare better.
+- **Allowlisted networks**: Some mobile networks only reach approved addresses. A server inside
+  the country that forwards port 443 to yours (a plain TCP forward is enough) gets through.
 - **Cover site**: Run a real website (WordPress, a blog, a business page) on the same server.
 - **Port**: Only expose port 443. Close everything else.
 - **Cert renewal**: Certbot renews automatically, and wisp picks up the new certificate within a
